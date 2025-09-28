@@ -6,7 +6,7 @@
     "test": "test"
   },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "hardhat test"
   },
   "keywords": [],
   "author": "",
@@ -19,5 +19,8 @@
     "ethereum-waffle": "^4.0.10",
     "ethers": "^5.8.0",
     "hardhat": "^2.26.3"
+  },
+  "dependencies": {
+    "ipfs-http-client": "^56.0.3"
   }
 }
