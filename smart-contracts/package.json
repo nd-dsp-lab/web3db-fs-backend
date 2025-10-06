@@ -21,6 +21,7 @@
     "hardhat": "^2.26.3"
   },
   "dependencies": {
+    "dotenv": "^17.2.3",
     "ipfs-http-client": "^56.0.3"
   }
 }
