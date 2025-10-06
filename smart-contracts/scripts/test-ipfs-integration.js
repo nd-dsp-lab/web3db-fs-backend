@@ -24,11 +24,11 @@ async function main() {
     console.log("File uploaded to IPFS with CID:", cid.toString());
 
     // Store CID in smart contract
-    const tx = await fileStorage.uploadFile(cid.toString());
+    const tx = await fileStorage.uploadFile(cid.toString());    // calling uploadFile function in contract
     await tx.wait();
     console.log("CID stored in smart contract");
 
-    // Get wallet address
+    // Get wallet address -> calling ethers.js getSigners method
     const [owner] = await ethers.getSigners();
 
     // Get files from smart contract
@@ -40,7 +40,7 @@ async function main() {
     for await (const chunk of ipfs.cat(cid)) {
         chunks.push(chunk);
     }
-    const download = Buffer.concat(chunks).toString();
+    const download = Buffer.concat(chunks).toString(); // Combining chunks into one string 
     console.log("Downloaded file content from IPFS:", download);
 
     // Test if content matches original
