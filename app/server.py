@@ -26,28 +26,48 @@ app.add_middleware(
 print(f"server started listening on port 8000")
 IPFS_API_URL = "http://localhost:5001/api/v0"
 
-#connect to smart contract 
-w3 = Web3(Web3.HTTPProvider("enter your sepolia node url here"))
+#connect to web3 via infura --> use Wills sepolia project
+w3 = Web3(Web3.HTTPProvider("enter your infura url here"))
+try:
+    if w3.is_connected():
+        print("Web3 is connected:", True)
+except Exception as e:
+    print(f"Warning: Could not verify Web3 connection at startup: {e}")
+    print("Web3 will be tested when making transactions")
+
+print("Web3 is connected:", w3.is_connected())
+
+# load contract from Will's deployed contract
 with open("./../smart-contracts/artifacts/contracts/FileStorage.sol/FileStorage.json") as f:
     abi = json.load(f)["abi"]
-contract = w3.eth.contract(address='enter contract address', abi=abi)
-my_address = "enter your address here"
+if not abi:
+    raise Exception("ABI not found")
+
+contract = w3.eth.contract(address='enter your contract address here', abi=abi)
+if not contract:
+    raise Exception("Contract not found")
+print("Contract loaded:", contract.address)
+
+my_address = "enter your wallet address here"
 private_key = "enter your private key here"
 
 # call smart contract
-async def call_smart_contract(cid: str):
-    # connect to local Ethereum node
-    nonce = w3.eth.get_transaction_count(my_address)
-    txn = contract.functions.uploadFile(cid).build_transaction({
-        'chainId': 11155111,
-        'gas': 70000,
-        'gasPrice': w3.to_wei('1', 'gwei'),
-        'nonce': nonce,
-    })
-    signed_txn = w3.eth.account.sign_transaction(txn, private_key=private_key)
-    tx_hash = w3.eth.send_raw_transaction(signed_txn.rawTransaction)
-    print(f"Transaction hash: {tx_hash.hex()}")
-    return tx_hash.hex()
+def call_smart_contract(cid: str):
+    try:
+        nonce = w3.eth.get_transaction_count(my_address)
+        txn = contract.functions.uploadFile(cid).build_transaction({
+            'chainId': 11155111,
+            'gas': 70000,
+            'gasPrice': w3.to_wei('1', 'gwei'),
+            'nonce': nonce,
+        })
+        signed_txn = w3.eth.account.sign_transaction(txn, private_key=private_key)
+        tx_hash = w3.eth.send_raw_transaction(signed_txn.rawTransaction)
+        print(f"Transaction hash: {tx_hash.hex()}")
+        return tx_hash.hex()
+    except Exception as e:
+        print("Web3 transaction failed:", e)
+        raise
 
 
 # Register the file to ipfs and get a cid 
@@ -57,7 +77,7 @@ async def upload_file(file: UploadFile, user_address: str = Form(...)):
     files = {"file": (file.filename, await file.read())}
     response = requests.post(f"{IPFS_API_URL}/add", files=files)
     cid = response.json()["Hash"]
-    tx_hash = await call_smart_contract(cid)
+    tx_hash = call_smart_contract(cid)
     # return the cid and user address
     return {"user": user_address, "cid": cid, "tx_hash": tx_hash}
 

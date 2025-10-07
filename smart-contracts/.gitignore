@@ -11,3 +11,9 @@ typechain-types/
 # Hardhat files
 /cache
 /artifacts
+
+# IPFS data and cache
+app/ipfs/data/
+**/ipfs/data/
+*.cache
+*.log
