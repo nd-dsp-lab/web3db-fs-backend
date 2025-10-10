@@ -27,7 +27,7 @@ print(f"server started listening on port 8000")
 IPFS_API_URL = "http://localhost:5001/api/v0"
 
 #connect to web3 via infura --> use Wills sepolia project
-w3 = Web3(Web3.HTTPProvider("enter your infura url here"))
+w3 = Web3(Web3.HTTPProvider("enter your infura url here"))  # replace with your Infura project URL
 try:
     if w3.is_connected():
         print("Web3 is connected:", True)
@@ -48,17 +48,18 @@ if not contract:
     raise Exception("Contract not found")
 print("Contract loaded:", contract.address)
 
-my_address = "enter your wallet address here"
-private_key = "enter your private key here"
+my_address = "enter your address here"  # replace with your address
+private_key = "enter your private key here"  # replace with your private key
 
 # call smart contract
 def call_smart_contract(cid: str):
     try:
         nonce = w3.eth.get_transaction_count(my_address)
+        gas_price = w3.eth.gas_price
         txn = contract.functions.uploadFile(cid).build_transaction({
             'chainId': 11155111,
-            'gas': 70000,
-            'gasPrice': w3.to_wei('1', 'gwei'),
+            'gas': 300000,
+            'gasPrice': gas_price,
             'nonce': nonce,
         })
         signed_txn = w3.eth.account.sign_transaction(txn, private_key=private_key)
@@ -74,10 +75,21 @@ def call_smart_contract(cid: str):
 @app.post("/upload")
 async def upload_file(file: UploadFile, user_address: str = Form(...)):
     # send the file to IPFS
+    # print(f"Received file: {file.filename} from user: {user_address}")
     files = {"file": (file.filename, await file.read())}
     response = requests.post(f"{IPFS_API_URL}/add", files=files)
+    # print(f"IPFS response: {response.text}")
     cid = response.json()["Hash"]
     tx_hash = call_smart_contract(cid)
     # return the cid and user address
     return {"user": user_address, "cid": cid, "tx_hash": tx_hash}
 
+#get all the files from the user on the smart contract
+@app.get("/")
+def get_files():
+    print("Fetching user files from smart contract...")
+    user_address = my_address   # can change this once we start actually pulling user address from metamask
+    user_files = contract.functions.getUserFiles(user_address).call()
+    print(f"User files: {user_files}")
+    return {"user_files": user_files} 
+    
