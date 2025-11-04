@@ -7,12 +7,17 @@ from web3 import Web3
 import json
 import os
 from dotenv import load_dotenv
-import os
 from pydantic import BaseModel
 
 # Add this class definition here
 class TransactionRequest(BaseModel):
     tx_hash: str
+
+# Adding model for share request
+class ShareRequest(BaseModel):
+    cid: str
+    to_address: str
+    usr_address: str
 
 # Load environment variables from .env file in smart-contracts folder
 env_path = os.path.join(os.path.dirname(__file__), '..', 'smart-contracts', '.env')
@@ -85,6 +90,28 @@ def prepare_transaction(cid: str, filename: str, folder_path: str, user_address:
         return txn
     except Exception as e:
         print("Transaction preparation failed:", e)
+        raise
+
+# preparing a share transaction for owner to sign
+def prepare_share_transaction(cid: str, to_address: str, usr_address: str):
+    try:
+        usr_address = Web3.to_checksum_address(usr_address)
+        to_address = Web3.to_checksum_address(to_address)
+        nonce = w3.eth.get_transaction_count(usr_address)
+        gas_price = w3.eth.gas_price
+        
+        # Build transaction but don't sign it
+        txn = contract.functions.shareFile(cid, to_address).build_transaction({
+            'chainId': 11155111,    # required for Sepolia
+            'gas': 300000,
+            'gasPrice': gas_price,
+            'nonce': nonce,
+            'from': usr_address
+        })
+        
+        return txn
+    except Exception as e:
+        print("Share transaction preparation failed:", e)
         raise
 
 # Register the file to ipfs and get a cid 
@@ -174,7 +201,19 @@ async def download_file_with_name(cid: str, filename: str):
             media_type="application/octet-stream",
             headers={"Content-Disposition": f"attachment; filename={filename}"}
         )
-        
+    
     except Exception as e:
         print(f"Download failed: {e}")
         return {"error": f"Failed to download file: {str(e)}"}
+
+# endpoint for sharing a file (frontend has to sign)
+@app.post("/share")
+async def share_file(request: ShareRequest):
+    try:
+        txn = prepare_share_transaction(request.cid, request.to_address, request.usr_address)
+        return {"transaction": txn}
+    except Exception as e:
+        print(f"Failed to prepare share transaction: {e}")
+        return {"error": str(e)}
+        
+    
