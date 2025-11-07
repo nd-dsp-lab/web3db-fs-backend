@@ -1,0 +1,47 @@
+# Node
+node_modules/
+**/node_modules/
+
+# Environment
+.env
+.env.* 
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# IPFS data
+app/ipfs/data/
+**/ipfs/data/
+*.cache
+
+# Hardhat / solidity build artifacts (if present at repo root)
+artifacts/
+cache/
+typechain/
+typechain-types/
+
+# Logs, OS, editors, CI
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.DS_Store
+.vscode/
+.idea/
+.vim/
+*.swp
+
+# Test / coverage
+coverage/
+.coverage
+.pytest_cache/
+
+# IPFS node data (do not track)
+app/ipfs/data/
+app/ipfs/data/**
+
+# don't accidentally track keystore files (sensitive)
+app/ipfs/data/ipfs/keystore/
