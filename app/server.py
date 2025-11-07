@@ -19,8 +19,8 @@ class ShareRequest(BaseModel):
     to_address: str
     usr_address: str
 
-# Load environment variables from .env file in smart-contracts folder
-env_path = os.path.join(os.path.dirname(__file__), '..', 'smart-contracts', '.env')
+# Load environment variables from .env file in web3db-fs-backend folder
+env_path = os.path.join(os.path.dirname(__file__), '..', '.env')
 load_dotenv(dotenv_path=env_path)
 
 # This will be a simple fastAPI server that acts as an sgx node 
@@ -215,5 +215,5 @@ async def share_file(request: ShareRequest):
     except Exception as e:
         print(f"Failed to prepare share transaction: {e}")
         return {"error": str(e)}
-        
-    
+
+
