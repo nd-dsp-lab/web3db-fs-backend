@@ -9,6 +9,7 @@ import os
 from dotenv import load_dotenv
 import os
 from pydantic import BaseModel
+from typing import List
 
 # Add this class definition here
 class TransactionRequest(BaseModel):
@@ -25,6 +26,7 @@ app = FastAPI()
 # Allow frontend origin
 origins = [
     "http://localhost:3000",
+    "http://10.24.214.16:3000"
 ]
 
 app.add_middleware(
@@ -91,6 +93,7 @@ def prepare_transaction(cid: str, filename: str, folder_path: str, user_address:
 @app.post("/upload")
 async def upload_file(file: UploadFile, user_address: str = Form(...), folder_path: str = Form("/")):
     # Upload to IPFS first
+    print(f"Uploading file {file.filename} to IPFS...")
     files = {"file": (file.filename, await file.read())}
     response = requests.post(f"{IPFS_API_URL}/add", files=files)
     cid = response.json()["Hash"]
@@ -105,6 +108,71 @@ async def upload_file(file: UploadFile, user_address: str = Form(...), folder_pa
         "user": user_address, 
         "cid": cid, 
         "filename": file.filename, 
+        "folder_path": full_path,
+        "transaction": transaction_data  # Frontend will sign this
+    }
+
+
+@app.post("/upload-folder")
+async def upload_folder(
+    files: List[UploadFile],
+    paths: List[str] = Form(...),
+    user_address: str = Form(...)
+):
+    print(f"Uploading {len(files)} files from folder for {user_address}...")
+
+    uploaded_files = []
+
+    for idx, file in enumerate(files):
+        folder_path = paths[idx] if idx < len(paths) else "/"
+        print(f"  Uploading {file.filename} to IPFS (folder: {folder_path})")
+
+        # Read file and upload to IPFS
+        file_data = await file.read()
+        ipfs_response = requests.post(
+            f"{IPFS_API_URL}/add",
+            files={"file": (file.filename, file_data)}
+        )
+        if ipfs_response.status_code != 200:
+            print(f"Failed to upload {file.filename} to IPFS")
+            continue
+        print(f"  Uploaded {file.filename} to IPFS")
+        ipfs_response.raise_for_status()
+        
+        # Parse only the last JSON object if multiple exist
+        raw_text = ipfs_response.text.strip()
+        last_line = raw_text.splitlines()[-1]
+        try:
+            ipfs_json = json.loads(last_line)
+            cid = ipfs_json["Hash"]
+        except Exception as e:
+            print("Error parsing IPFS response:", e)
+            print("Raw IPFS response:", raw_text)
+            continue
+
+        # Extract just the filename without the folder path
+        actual_filename = file.filename.split('/')[-1]
+        
+        # Build and prepare blockchain transaction for each file
+        # Use folder_path as-is from frontend, and actual_filename
+        transaction_data = prepare_transaction(cid, actual_filename, folder_path, user_address)
+
+        # The full_path should just be folder_path + filename
+        clean_folder_path = folder_path.rstrip('/')
+        full_path = f"{clean_folder_path}/{actual_filename}" if clean_folder_path else f"/{actual_filename}"
+
+        uploaded_files.append({
+            "cid": cid,
+            "filename": actual_filename,  # Use actual_filename here too
+            "folder_path": full_path,
+            "transaction": transaction_data
+        })
+
+    # Return the last file's data (or modify to return all)
+    return {
+        "user": user_address, 
+        "cid": cid, 
+        "uploaded_files": uploaded_files, 
         "folder_path": full_path,
         "transaction": transaction_data  # Frontend will sign this
     }
