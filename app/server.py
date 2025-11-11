@@ -8,6 +8,7 @@ import json
 import os
 from dotenv import load_dotenv
 from pydantic import BaseModel
+from typing import Optional
 
 # Add this class definition here
 class TransactionRequest(BaseModel):
@@ -17,10 +18,22 @@ class TransactionRequest(BaseModel):
 class ShareRequest(BaseModel):
     cid: str
     to_address: str
-    usr_address: str
+    user_address: str
 
-# Load environment variables from .env file in web3db-fs-backend folder
-env_path = os.path.join(os.path.dirname(__file__), '..', '.env')
+# Adding model for unshare request
+class UnshareRequest(BaseModel):
+    cid: str
+    to_address: str
+    user_address: str
+
+# Adding model for delete request
+class DeleteRequest(BaseModel):
+    cid: str
+    user_address: str
+    unpin_after: Optional[bool] = False
+
+# Load environment variables from .env file in smart-contracts folder
+env_path = os.path.join(os.path.dirname(__file__), '../smart-contracts', '.env')
 load_dotenv(dotenv_path=env_path)
 
 # This will be a simple fastAPI server that acts as an sgx node 
@@ -54,8 +67,6 @@ except Exception as e:
     print(f"Warning: Could not verify Web3 connection at startup: {e}")
     print("Web3 will be tested when making transactions")
 
-print("Web3 is connected:", w3.is_connected())
-
 # load contract from Will's deployed contract
 with open("./../smart-contracts/artifacts/contracts/FileStorage.sol/FileStorage.json") as f:
     abi = json.load(f)["abi"]
@@ -72,7 +83,7 @@ print("Contract loaded:", contract.address)
 
 
 # return transaction data for frontend to sign
-def prepare_transaction(cid: str, filename: str, folder_path: str, user_address: str):
+def prepare_upload_transaction(cid: str, filename: str, folder_path: str, user_address: str):
     try:
         user_address = Web3.to_checksum_address(user_address)
         nonce = w3.eth.get_transaction_count(user_address)
@@ -93,26 +104,90 @@ def prepare_transaction(cid: str, filename: str, folder_path: str, user_address:
         raise
 
 # preparing a share transaction for owner to sign
-def prepare_share_transaction(cid: str, to_address: str, usr_address: str):
+def prepare_share_transaction(cid: str, to_address: str, user_address: str):
     try:
-        usr_address = Web3.to_checksum_address(usr_address)
+        user_address = Web3.to_checksum_address(user_address)
         to_address = Web3.to_checksum_address(to_address)
-        nonce = w3.eth.get_transaction_count(usr_address)
+        nonce = w3.eth.get_transaction_count(user_address)
         gas_price = w3.eth.gas_price
-        
+ 
         # Build transaction but don't sign it
         txn = contract.functions.shareFile(cid, to_address).build_transaction({
             'chainId': 11155111,    # required for Sepolia
             'gas': 300000,
             'gasPrice': gas_price,
             'nonce': nonce,
-            'from': usr_address
+            'from': user_address
         })
         
         return txn
     except Exception as e:
         print("Share transaction preparation failed:", e)
         raise
+
+# preparing an unshare transaction for owner to sign
+def prepare_unshare_transaction(cid: str, to_address: str, user_address: str):
+    try:
+        user_address = Web3.to_checksum_address(user_address)
+        to_address = Web3.to_checksum_address(to_address)
+        nonce = w3.eth.get_transaction_count(user_address)
+        gas_price = w3.eth.gas_price
+
+        txn = contract.functions.unshareFile(cid, to_address).build_transaction({
+            'chainId': 11155111,    # required for Sepolia
+            'gas': 300000,
+            'gasPrice': gas_price,
+            'nonce': nonce,
+            'from': user_address
+        })
+
+        return txn
+    except Exception as e:
+        print("Unshare transaction preparation failed:", e)
+        raise
+
+# preparing a delete transaction for owner to sign
+def prepare_delete_transaction(cid: str, user_address: str):
+    try:
+        user_address = Web3.to_checksum_address(user_address)
+        nonce = w3.eth.get_transaction_count(user_address)
+        gas_price = w3.eth.gas_price
+
+        txn = contract.functions.deleteFile(cid).build_transaction({
+            'chainId': 11155111,
+            'gas': 300000,
+            'gasPrice': gas_price,
+            'nonce': nonce,
+            'from': user_address
+        })
+        return txn
+    except Exception as e:
+        print("Delete transaction prep failed:", e)
+        raise
+
+# helper to unpin cid and trigger garbage collection on local IPFS node
+def unpin_cid(cid: str):
+    result = {"cid": cid, "unpin_ok": False, "unpin_response": None, "gc_ok": False, "gc_response": None}
+
+    try:
+        # remove pin
+        rm_response = requests.post(f"{IPFS_API_URL}/pin/rm", params={"arg": cid})
+        result["unpin_response"] = {"status_code": rm_response.status_code, "text": rm_response.text}
+        if rm_response.ok:
+            result["unpin_ok"] = True
+        else:
+            result["unpin_ok"] = False
+
+        # trigger garbage collection
+        gc_response = requests.post(f"{IPFS_API_URL}/repo/gc")
+        result["gc_response"] = {"status_code": gc_response.status_code, "text": gc_response.text}
+        result["gc_ok"] = gc_response.ok
+
+    except Exception as e:
+        result["error"] = str(e)
+
+    return result
+
 
 # Register the file to ipfs and get a cid 
 @app.post("/upload")
@@ -123,7 +198,7 @@ async def upload_file(file: UploadFile, user_address: str = Form(...), folder_pa
     cid = response.json()["Hash"]
     
     # Prepare transaction for frontend to sign
-    transaction_data = prepare_transaction(cid, file.filename, folder_path, user_address)
+    transaction_data = prepare_upload_transaction(cid, file.filename, folder_path, user_address)
     
     clean_folder_path = folder_path.rstrip('/')
     full_path = f"{clean_folder_path}/{file.filename}" if clean_folder_path else f"/{file.filename}"
@@ -174,14 +249,37 @@ async def verify_upload(request: TransactionRequest):
         print(f"Block number: {receipt.blockNumber}")
         print(f"Gas used: {receipt.gasUsed}")
         print(f"Status: {receipt.status}")
-        
-        return {
+
+        response_payload = {
             "success": True, 
             "tx_hash": request.tx_hash,
             "block_number": receipt.blockNumber,
             "gas_used": receipt.gasUsed,
             "status": receipt.status
         }
+        
+        try: 
+            tx = w3.eth.get_transaction(request.tx_hash)
+            input_data = tx.input
+            func_obj, func_params = contract.decode_function_input(input_data)
+            func_name = func_obj.fn_name if hasattr(func_obj, 'fn_name') else func_obj.function_identifier
+            response_payload["decoded_function"] = {"name": func_name, "args": func_params}
+
+            # if it's a deleteFile call and tx succeeded -> unpin cid from local IPFS
+            if func_name == "deleteFile" and receipt.status == 1:
+                cid_unpin = func_params.get("cid") or func_params.get("_cid") or None
+                if cid_unpin:
+                    print(f"Detected deleteFile for cid {cid_unpin} - unpinning from local IPFS node")
+                    unpin_result = unpin_cid(cid_unpin)
+                    response_payload["unpin_result"] = unpin_result
+                else:
+                    response_payload["unpin_result"] = {"error": "Could not find cid in tx params"}
+        except Exception as e:
+            print(f"Couldn't decode tx input for unpin: {e}")
+            response_payload["decoded_function_error"] = str(e)
+
+        return response_payload
+    
     except Exception as e:
         print(f"Transaction verification failed: {e}")
         return {"success": False, "error": str(e)}
@@ -210,10 +308,40 @@ async def download_file_with_name(cid: str, filename: str):
 @app.post("/share")
 async def share_file(request: ShareRequest):
     try:
-        txn = prepare_share_transaction(request.cid, request.to_address, request.usr_address)
+        txn = prepare_share_transaction(request.cid, request.to_address, request.user_address)
         return {"transaction": txn}
     except Exception as e:
         print(f"Failed to prepare share transaction: {e}")
+        return {"error": str(e)}
+
+# endpoint for unsharing a file (frontend has to sign)
+@app.post("/unshare")
+async def unshare_file(request: UnshareRequest):
+    try:
+        txn = prepare_unshare_transaction(request.cid, request.to_address, request.user_address)
+        return {"transaction": txn}
+    except Exception as e:
+        print(f"Failed to prep unshare transaction: {e}")
+        return {"error": str(e)}
+
+# endpoint for deleting a file
+@app.post("/delete")
+async def delete_file(request: DeleteRequest):
+    try:
+        txn = prepare_delete_transaction(request.cid, request.user_address)
+        result = {"transaction": txn}
+        return result
+    
+    except Exception as e:
+        print(f"Failed to prep delete transaction: {e}")
+        return {"error": str(e)}
+
+@app.get("/shared-users")
+def get_shared_users(cid: str):
+    try:
+        users = contract.functions.getSharedUsers(cid).call()
+        return {"cid": cid, "shared_with": users}
+    except Exception as e:
         return {"error": str(e)}
 
 

@@ -25,6 +25,7 @@ contract FileStorage {
     event FileUploaded(address indexed owner, string cid);
     event FileShared(address indexed owner, address indexed to, string cid);
     event UnsharedFile(address indexed owner, address indexed from, string cid);
+    event FileDeleted(address indexed owner, string cid);
     // Note for my understanding:
     // An "event" in solidity is a way for smart contract to log data on the blockchain
     // Cheaper than actually storing the data
@@ -122,6 +123,11 @@ contract FileStorage {
         return fileOwners[cid];
     }
 
+    // Return list of addresses a CID was shared with
+    function getSharedUsers(string memory cid) public view returns (address[] memory) {
+        return sharedWithList[cid];
+    }
+
     // Helper to find metadata (in internal memory, not blockchain)
     function _findOwnerFileMeta(address owner, string memory cid) internal view returns (FileMetadata memory) {
         uint256 len = userFiles[owner].length;
@@ -131,6 +137,51 @@ contract FileStorage {
             }
         }
         revert("File not found for owner");
+    }
+
+    // Deletes file metadata from owner's list, gets rid of fileOwners mapping, and unshares from anyone (only owner can delete)
+    function deleteFile(string memory cid) public {
+        address owner = fileOwners[cid];
+        require(owner == msg.sender, "Must be owner to delete");
+
+        // remove from owner's userFiles -> the files mapped to their address
+        uint256 len = userFiles[owner].length;
+        for (uint256 i = 0; i < len; i++) {
+            if (keccak256(bytes(userFiles[owner][i].cid)) == keccak256(bytes(cid))) {
+                if (i != len - 1) {
+                    userFiles[owner][i] = userFiles[owner][len - 1];
+                }
+                userFiles[owner].pop();
+                break;
+            }
+        }
+
+        // unshare from all addresses it was shared with
+        uint256 sharedLen = sharedWithList[cid].length;
+        for (uint256 j = 0; j < sharedLen; j++) {
+            address toAddr = sharedWithList[cid][j];
+            // remove from sharedFiles of toAddr
+            uint256 sharedFilesLen = sharedFiles[toAddr].length;
+            for (uint256 k = 0; k < sharedFilesLen; k++) {
+                if (keccak256(bytes(sharedFiles[toAddr][k].cid)) == keccak256(bytes(cid))) {
+                    if (k != sharedFilesLen - 1) {
+                        sharedFiles[toAddr][k] = sharedFiles[toAddr][sharedFilesLen - 1];
+                    }
+                    sharedFiles[toAddr].pop();
+                    break;
+                }
+            }
+            sharedFileIndex[cid][toAddr] = 0;
+        }
+
+        // clear sharedWithList
+        delete sharedWithList[cid];
+
+        // clear fileOwners mapping
+        fileOwners[cid] = address(0);
+
+        // emit event
+        emit FileDeleted(owner, cid);
     }
 }
 // Not storing actual files -> that lives on IPFS
