@@ -54,7 +54,7 @@ app.add_middleware(
 )
 
 
-print(f"server started listening on port 8000")
+print(f"server started listening on port 8090")
 IPFS_API_URL = "http://localhost:5001/api/v0"
 
 #connect to web3 via infura --> use environment variable
@@ -344,4 +344,8 @@ def get_shared_users(cid: str):
     except Exception as e:
         return {"error": str(e)}
 
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8090)
 
