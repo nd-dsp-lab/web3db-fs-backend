@@ -68,7 +68,8 @@ except Exception as e:
     print("Web3 will be tested when making transactions")
 
 # load contract from Will's deployed contract
-with open("./../smart-contracts/artifacts/contracts/FileStorage.sol/FileStorage.json") as f:
+contract_path = os.path.join(os.path.dirname(__file__), '..', 'smart-contracts', 'artifacts', 'contracts', 'FileStorage.sol', 'FileStorage.json')
+with open(contract_path) as f:
     abi = json.load(f)["abi"]
 if not abi:
     raise Exception("ABI not found")
