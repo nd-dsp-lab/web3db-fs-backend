@@ -30,6 +30,8 @@ app = FastAPI()
 # Allow frontend origin
 origins = [
     "http://localhost:3000",
+    "http://fs.web3db.org",
+    "https://fs.web3db.org",
 ]
 
 app.add_middleware(
