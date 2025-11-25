@@ -33,7 +33,11 @@ class DeleteRequest(BaseModel):
     unpin_after: Optional[bool] = False
 
 # Load environment variables from .env file in smart-contracts folder
-env_path = os.path.join(os.path.dirname(__file__), '../smart-contracts', '.env')
+# env_path = os.path.join(os.path.dirname(__file__), '../smart-contracts', '.env')
+# load_dotenv(dotenv_path=env_path)
+
+# Load environment variables from .env file in web3db-fs-backend folder
+env_path = os.path.join(os.path.dirname(__file__), '..', '.env')
 load_dotenv(dotenv_path=env_path)
 
 # This will be a simple fastAPI server that acts as an sgx node 
@@ -346,11 +350,6 @@ def get_shared_users(cid: str):
         return {"cid": cid, "shared_with": users}
     except Exception as e:
         return {"error": str(e)}
-
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8090)
 
 if __name__ == "__main__":
     import uvicorn
