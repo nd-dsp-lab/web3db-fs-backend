@@ -1,7 +1,8 @@
+const path = require("path");
 const dotenv = require("dotenv");
-require("@nomiclabs/hardhat-ethers");
+require("@nomicfoundation/hardhat-toolbox");
 
-dotenv.config()
+dotenv.config({ path: path.resolve(__dirname, "../.env") });
 
 console.log("Environment variables loaded:");
 console.log("INFURA_API_KEY:", process.env.INFURA_API_KEY ? "Present" : "Missing");
