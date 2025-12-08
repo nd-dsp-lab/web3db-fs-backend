@@ -262,7 +262,7 @@ async def upload_folder(
         
         # Build and prepare blockchain transaction for each file
         # Use folder_path as-is from frontend, and actual_filename
-        transaction_data = prepare_transaction(cid, actual_filename, folder_path, user_address)
+        transaction_data = prepare_upload_transaction(cid, actual_filename, folder_path, user_address)
 
         # The full_path should just be folder_path + filename
         clean_folder_path = folder_path.rstrip('/')
