@@ -9,6 +9,7 @@ import os
 from dotenv import load_dotenv
 from pydantic import BaseModel
 from typing import Optional, List
+from permissions import READ, WRITE, DOWNLOAD, DELETE, SHARE, MOVE, CHANGE_OWNER, CHANGE_ROLE
 
 # Add this class definition here
 class TransactionRequest(BaseModel):
@@ -90,16 +91,16 @@ print("Contract loaded:", contract.address)
 
 
 # return transaction data for frontend to sign
-def prepare_upload_transaction(cid: str, filename: str, folder_path: str, user_address: str):
+def prepare_upload_transaction(cid: str, filename: str, user_address: str, file_format: Optional[str] = None):
+    print(f"File cid: {cid}")
     try:
         user_address = Web3.to_checksum_address(user_address)
         nonce = w3.eth.get_transaction_count(user_address)
         gas_price = w3.eth.gas_price
         
         # Build transaction but don't sign it
-        txn = contract.functions.uploadFile(cid, filename, folder_path).build_transaction({
+        txn = contract.functions.uploadFile(cid, filename, file_format).build_transaction({
             'chainId': 11155111,    # required for Sepolia
-            'gas': 300000,
             'gasPrice': gas_price,
             'nonce': nonce,
             'from': user_address
@@ -119,9 +120,8 @@ def prepare_share_transaction(cid: str, to_address: str, user_address: str):
         gas_price = w3.eth.gas_price
  
         # Build transaction but don't sign it
-        txn = contract.functions.shareFile(cid, to_address).build_transaction({
+        txn = contract.functions.grant(cid, to_address, SHARE).build_transaction({
             'chainId': 11155111,    # required for Sepolia
-            'gas': 300000,
             'gasPrice': gas_price,
             'nonce': nonce,
             'from': user_address
@@ -140,9 +140,8 @@ def prepare_unshare_transaction(cid: str, to_address: str, user_address: str):
         nonce = w3.eth.get_transaction_count(user_address)
         gas_price = w3.eth.gas_price
 
-        txn = contract.functions.unshareFile(cid, to_address).build_transaction({
+        txn = contract.functions.unshareFile(cid, to_address, ~SHARE).build_transaction({
             'chainId': 11155111,    # required for Sepolia
-            'gas': 300000,
             'gasPrice': gas_price,
             'nonce': nonce,
             'from': user_address
@@ -162,7 +161,6 @@ def prepare_delete_transaction(cid: str, user_address: str):
 
         txn = contract.functions.deleteFile(cid).build_transaction({
             'chainId': 11155111,
-            'gas': 300000,
             'gasPrice': gas_price,
             'nonce': nonce,
             'from': user_address
@@ -198,24 +196,32 @@ def unpin_cid(cid: str):
 
 # Register the file to ipfs and get a cid 
 @app.post("/upload")
-async def upload_file(file: UploadFile, user_address: str = Form(...), folder_path: str = Form("/")):
+async def upload_file(file: UploadFile, user_address: str = Form(...), file_format: Optional[str] = None):
     # Upload to IPFS first
     print(f"Uploading file {file.filename} to IPFS...")
     files = {"file": (file.filename, await file.read())}
     response = requests.post(f"{IPFS_API_URL}/add", files=files)
     cid = response.json()["Hash"]
+
+    # detecting file format if not given (if none detected, leave empty)
+    if file_format is None:
+        if "." in file.filename:
+            file_format = file.filename.split(".")[-1]
+        else:
+            file_format = ""
     
     # Prepare transaction for frontend to sign
-    transaction_data = prepare_upload_transaction(cid, file.filename, folder_path, user_address)
+    transaction_data = prepare_upload_transaction(cid, file.filename, user_address, file_format)
     
-    clean_folder_path = folder_path.rstrip('/')
-    full_path = f"{clean_folder_path}/{file.filename}" if clean_folder_path else f"/{file.filename}"
+    # clean_folder_path = folder_path.rstrip('/')
+    # full_path = f"{clean_folder_path}/{file.filename}" if clean_folder_path else f"/{file.filename}"
     
     return {
         "user": user_address, 
         "cid": cid, 
         "filename": file.filename, 
-        "folder_path": full_path,
+        "fileformat": file_format,
+        # "folder_path": full_path,
         "transaction": transaction_data  # Frontend will sign this
     }
 
@@ -296,14 +302,16 @@ def get_files(user_address: str = None):
     structured_files = []
     for file_data in user_files:
 
-        # Cleaning up folder path
-        folder_path = file_data[2].rstrip('/')
-        full_path = f"{folder_path}/{file_data[1]}" if folder_path else f"/{file_data[1]}"
+        # ----- TEMPORARY - everything in root ---------
+        folder_path = "/"
+        # folder_path = file_data[2].rstrip('/')
+        # full_path = f"{folder_path}/{file_data[1]}" if folder_path else f"/{file_data[1]}"
 
         structured_files.append({
             "cid": file_data[0],        # cid
             "filename": file_data[1],   # filename
-            "folder_path": full_path, # folderPath
+            "folder_path": folder_path, # temp folderPath
+            "file_format": file_data[2], # fileFormat
             "timestamp": file_data[3],   # timestamp
             "ipfs_url": f"http://localhost:8080/ipfs/{file_data[0]}"    # need specific cid to find in ipfs
         })
