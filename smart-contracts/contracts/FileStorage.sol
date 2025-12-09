@@ -188,6 +188,11 @@ contract FileStorage {
         return fileOwner[cid];
     }
 
+    // Getter to retrieve shared users
+    function getSharedUsers(string memory cid) public view returns (address[] memory) {
+        return sharedUsers[cid];
+    }
+
     // Helper to find metadata (in internal memory, not blockchain)
     function _findOwnerFileMeta(address owner, string memory cid) internal view returns (FileMetadata memory) {
         uint256 len = userFiles[owner].length;

@@ -91,15 +91,15 @@ print("Contract loaded:", contract.address)
 
 
 # return transaction data for frontend to sign
-def prepare_upload_transaction(cid: str, filename: str, user_address: str, file_format: Optional[str] = None):
-    print(f"File cid: {cid}")
+def prepare_upload_transaction(cid: str, full_path: str, user_address: str, file_format: Optional[str] = None):
+    print(f"[prepare_upload_transaction] CID={cid}, full_path={full_path}")
     try:
         user_address = Web3.to_checksum_address(user_address)
         nonce = w3.eth.get_transaction_count(user_address)
         gas_price = w3.eth.gas_price
         
         # Build transaction but don't sign it
-        txn = contract.functions.uploadFile(cid, filename, file_format).build_transaction({
+        txn = contract.functions.uploadFile(cid, full_path, file_format).build_transaction({
             'chainId': 11155111,    # required for Sepolia
             'gasPrice': gas_price,
             'nonce': nonce,
@@ -119,8 +119,18 @@ def prepare_share_transaction(cid: str, to_address: str, user_address: str):
         nonce = w3.eth.get_transaction_count(user_address)
         gas_price = w3.eth.gas_price
  
+        # Ensure ownership
+        owner = contract.functions.getFileOwner(cid).call()
+        if owner.lower() != user_address.lower():
+            raise Exception("Only file owner can share file.")
+        
+        # Share permissions (READ + DOWNLOAD)
+        grant_mask = READ | DOWNLOAD
+
+        print(f"Sharing CID {cid} with {to_address} using mask {grant_mask}")
+
         # Build transaction but don't sign it
-        txn = contract.functions.grant(cid, to_address, SHARE).build_transaction({
+        txn = contract.functions.grant(cid, to_address, grant_mask).build_transaction({
             'chainId': 11155111,    # required for Sepolia
             'gasPrice': gas_price,
             'nonce': nonce,
@@ -140,7 +150,17 @@ def prepare_unshare_transaction(cid: str, to_address: str, user_address: str):
         nonce = w3.eth.get_transaction_count(user_address)
         gas_price = w3.eth.gas_price
 
-        txn = contract.functions.unshareFile(cid, to_address, ~SHARE).build_transaction({
+        # Ensure ownership
+        owner = contract.functions.getFileOwner(cid).call()
+        if owner.lower() != user_address.lower():
+            raise Exception("Only file owner can unshare file.")
+
+        # Unshare permissions (~READ + ~DOWNLOAD) -> bits are flipped in smart contract
+        revoke_mask = READ | DOWNLOAD
+
+        print(f"Unsharing CID {cid} with {to_address} using mask {revoke_mask}")
+
+        txn = contract.functions.revoke(cid, to_address, revoke_mask).build_transaction({
             'chainId': 11155111,    # required for Sepolia
             'gasPrice': gas_price,
             'nonce': nonce,
@@ -196,7 +216,7 @@ def unpin_cid(cid: str):
 
 # Register the file to ipfs and get a cid 
 @app.post("/upload")
-async def upload_file(file: UploadFile, user_address: str = Form(...), file_format: Optional[str] = None):
+async def upload_file(file: UploadFile, user_address: str = Form(...), folder_path: str = Form(""), file_format: Optional[str] = None):
     # Upload to IPFS first
     print(f"Uploading file {file.filename} to IPFS...")
     files = {"file": (file.filename, await file.read())}
@@ -210,18 +230,31 @@ async def upload_file(file: UploadFile, user_address: str = Form(...), file_form
         else:
             file_format = ""
     
-    # Prepare transaction for frontend to sign
-    transaction_data = prepare_upload_transaction(cid, file.filename, user_address, file_format)
+    # clean folder path
+    folder_path = folder_path.strip()
+
+    if folder_path.startswith("/"):
+        folder_path = folder_path[1:]
+    folder_path = folder_path.rstrip("/")
+
+    # build full path for contract storage
+    if folder_path == "":
+        full_path = file.filename
+    else:
+        full_path = f"{folder_path}/{file.filename}"
+
+    print(f"[upload] full_path to send to contract: {full_path}")
     
-    # clean_folder_path = folder_path.rstrip('/')
-    # full_path = f"{clean_folder_path}/{file.filename}" if clean_folder_path else f"/{file.filename}"
+    # Prepare transaction for frontend to sign
+    transaction_data = prepare_upload_transaction(cid, full_path, user_address, file_format)
     
     return {
         "user": user_address, 
         "cid": cid, 
-        "filename": file.filename, 
+        "filename": file.filename,  # leaf for UI
+        "folder_path": "/" + folder_path if folder_path else "/",
+        "full_path": full_path,
         "fileformat": file_format,
-        # "folder_path": full_path,
         "transaction": transaction_data  # Frontend will sign this
     }
 
@@ -301,19 +334,43 @@ def get_files(user_address: str = None):
     # Need to convert struct to readable format
     structured_files = []
     for file_data in user_files:
+        cid = file_data[0]
+        full_path = file_data[1]
+        file_format = file_data[2]
+        timestamp = file_data[3]
+        
+        levels = full_path.split("/")
 
-        # ----- TEMPORARY - everything in root ---------
-        folder_path = "/"
-        # folder_path = file_data[2].rstrip('/')
-        # full_path = f"{folder_path}/{file_data[1]}" if folder_path else f"/{file_data[1]}"
+        if len(levels) == 1:
+            filename = levels[0]
+            folder_path = "/"
+        else:
+            filename = levels[-1]
+            folder_path = "/" + "/".join(levels[:-1])
 
+        # get owner and permissions -> this is primarily for later updates to conditionally show buttons (download, share, etc.)
+        try:
+            owner = contract.functions.getFileOwner(cid).call()
+        except Exception:
+            owner = None
+        
+        is_owner = (owner is not None and owner.lower() == user_address.lower())
+
+        try:
+            permissions = contract.functions.getPermissions(cid, user_address).call()
+        except Exception:
+            permissions = 0
+        
         structured_files.append({
-            "cid": file_data[0],        # cid
-            "filename": file_data[1],   # filename
+            "cid": cid,        # cid
+            "filename": filename,   # filename
             "folder_path": folder_path, # temp folderPath
-            "file_format": file_data[2], # fileFormat
-            "timestamp": file_data[3],   # timestamp
-            "ipfs_url": f"http://localhost:8080/ipfs/{file_data[0]}"    # need specific cid to find in ipfs
+            "file_format": file_format, # fileFormat
+            "timestamp": timestamp,   # timestamp
+            "owner": owner,
+            "is_owner": is_owner,
+            "permissions": permissions,
+            "ipfs_url": f"http://localhost:8080/ipfs/{cid}"    # need specific cid to find in ipfs
         })
     
     print(f"User files: {structured_files}")
@@ -420,12 +477,12 @@ async def delete_file(request: DeleteRequest):
 @app.get("/shared-users")
 def get_shared_users(cid: str):
     try:
-        users = contract.functions.getSharedUsers(cid).call()
-        return {"cid": cid, "shared_with": users}
+        shared_users = contract.functions.getSharedUsers(cid).call()
+        return {"shared_with": shared_users}
     except Exception as e:
-        return {"error": str(e)}
+        print(f"Error fetching shared users for CID {cid}: {e}")
+        return {"shared_with": []}
 
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8090)
-
