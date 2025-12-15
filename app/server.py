@@ -99,7 +99,7 @@ def prepare_upload_transaction(cid: str, full_path: str, user_address: str, file
         gas_price = w3.eth.gas_price
         
         # Build transaction but don't sign it
-        txn = contract.functions.uploadFile(cid, full_path, file_format).build_transaction({
+        txn = contract.functions.uploadFile(cid, full_path, file_format or "").build_transaction({
             'chainId': 11155111,    # required for Sepolia
             'gasPrice': gas_price,
             'nonce': nonce,
@@ -270,6 +270,7 @@ async def upload_folder(
     uploaded_files = []
 
     for idx, file in enumerate(files):
+        print(idx, file.filename)
         folder_path = paths[idx] if idx < len(paths) else "/"
         print(f"  Uploading {file.filename} to IPFS (folder: {folder_path})")
 
@@ -298,15 +299,17 @@ async def upload_folder(
 
         # Extract just the filename without the folder path
         actual_filename = file.filename.split('/')[-1]
+        print(f"  Actual filename extracted: {actual_filename}")
         
         # Build and prepare blockchain transaction for each file
-        # Use folder_path as-is from frontend, and actual_filename
-        transaction_data = prepare_upload_transaction(cid, actual_filename, folder_path, user_address)
-
-        # The full_path should just be folder_path + filename
-        clean_folder_path = folder_path.rstrip('/')
-        full_path = f"{clean_folder_path}/{actual_filename}" if clean_folder_path else f"/{actual_filename}"
-
+        full_path = folder_path  # already complete
+        print(f"  Preparing upload transaction for {actual_filename} at path {full_path}")
+        filename = full_path.split("/")[-1]
+        transaction_data = prepare_upload_transaction(
+            cid,
+            full_path,
+            user_address
+        )
         uploaded_files.append({
             "cid": cid,
             "filename": actual_filename,  # Use actual_filename here too
