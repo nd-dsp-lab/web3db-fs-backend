@@ -1,7 +1,4 @@
 const { expect } = require("chai");
-const chai = require("chai");
-const { solidity } = require("ethereum-waffle");
-chai.use(solidity);
 const { ethers } = require("hardhat");
 
 describe("FileStorage", function () {
@@ -45,7 +42,7 @@ describe("FileStorage", function () {
       expect(files[0].filename).to.equal(filename);
       expect(files[0].fileFormat).to.equal(fileFormat);
       // timestamp is a BigNumber -> convert to number before numeric comparison
-      expect(files[0].timestamp.toNumber()).to.be.gt(0);
+      expect(Number(files[0].timestamp)).to.be.gt(0);
     });
 
     it("Should set owner as file owner on upload", async function () {
@@ -63,7 +60,7 @@ describe("FileStorage", function () {
       await fileStorage.uploadFile(testCID, "test.doc", "application/doc");
       
       const permissions = await fileStorage.getPermissions(testCID, owner.address);
-      expect(permissions.toNumber()).to.equal(0xFF); // All 8 permission bits
+      expect(Number(permissions)).to.equal(0xFF); // All 8 permission bits
     });
 
     it("Should prevent duplicate file uploads", async function () {
@@ -91,26 +88,25 @@ describe("FileStorage", function () {
       await fileStorage.setPermissions(testCID, user1.address, permissions);
       
       const userPerms = await fileStorage.getPermissions(testCID, user1.address);
-      expect(userPerms.toNumber()).to.equal(permissions);
+      expect(Number(userPerms)).to.equal(permissions);
     });
 
     it("Should allow setting multiple permission combinations", async function () {
       // Test READ + WRITE + DOWNLOAD
       await fileStorage.setPermissions(testCID, user1.address, READ | WRITE | DOWNLOAD);
-      expect((await fileStorage.getPermissions(testCID, user1.address)).toNumber()).to.equal(READ | WRITE | DOWNLOAD);
-      
+      expect(Number(await fileStorage.getPermissions(testCID, user1.address))).to.equal(READ | WRITE | DOWNLOAD); 
       // Test SHARE + MOVE
       await fileStorage.setPermissions(testCID, user2.address, SHARE | MOVE);
-      expect((await fileStorage.getPermissions(testCID, user2.address)).toNumber()).to.equal(SHARE | MOVE);
+      expect(Number(await fileStorage.getPermissions(testCID, user2.address))).to.equal(SHARE | MOVE);
     });
 
     it("Should overwrite previous permissions", async function () {
       await fileStorage.setPermissions(testCID, user1.address, READ);
-      expect((await fileStorage.getPermissions(testCID, user1.address)).toNumber()).to.equal(READ);
+      expect(Number(await fileStorage.getPermissions(testCID, user1.address))).to.equal(READ);
       
       // Overwrite with new permissions
       await fileStorage.setPermissions(testCID, user1.address, WRITE | DELETE);
-      expect((await fileStorage.getPermissions(testCID, user1.address)).toNumber()).to.equal(WRITE | DELETE);
+      expect(Number(await fileStorage.getPermissions(testCID, user1.address))).to.equal(WRITE | DELETE);
     });
 
     it("Should only allow file owner to set permissions", async function () {
@@ -121,7 +117,7 @@ describe("FileStorage", function () {
 
     it("Should reject invalid user address", async function () {
       await expect(
-        fileStorage.setPermissions(testCID, ethers.constants.AddressZero, READ)
+        fileStorage.setPermissions(testCID, ethers.ZeroAddress, READ)
       ).to.be.revertedWith("Invalid user");
     });
 
@@ -150,7 +146,7 @@ describe("FileStorage", function () {
       await fileStorage.grant(testCID, user1.address, DOWNLOAD);
       
       const permissions = await fileStorage.getPermissions(testCID, user1.address);
-      expect(permissions.toNumber()).to.equal(READ | DOWNLOAD);
+      expect(Number(permissions)).to.equal(READ | DOWNLOAD);
     });
 
     it("Should add user to sharedFiles on first grant", async function () {
@@ -176,7 +172,7 @@ describe("FileStorage", function () {
       await fileStorage.grant(testCID, user1.address, DOWNLOAD);
       
       const permissions = await fileStorage.getPermissions(testCID, user1.address);
-      expect(permissions.toNumber()).to.equal(READ | WRITE | DOWNLOAD);
+      expect(Number(permissions)).to.equal(READ | WRITE | DOWNLOAD);
     });
 
     it("Should only allow file owner to grant permissions", async function () {
@@ -196,7 +192,7 @@ describe("FileStorage", function () {
       await fileStorage.grant(testCID, user1.address, READ);
       
       const permissions = await fileStorage.getPermissions(testCID, user1.address);
-      expect(permissions.toNumber()).to.equal(READ);
+      expect(Number(permissions)).to.equal(READ);
     });
   });
 
@@ -214,7 +210,7 @@ describe("FileStorage", function () {
       await fileStorage.revoke(testCID, user1.address, READ | WRITE);
       
       const permissions = await fileStorage.getPermissions(testCID, user1.address);
-      expect(permissions.toNumber()).to.equal(0xFF & ~(READ | WRITE));
+      expect(Number(permissions)).to.equal(0xFF & ~(READ | WRITE));
     });
 
     it("Should only allow file owner to revoke permissions", async function () {
@@ -352,7 +348,7 @@ describe("FileStorage", function () {
       expect(files.length).to.equal(0);
       
       const fileOwnerAddr = await fileStorage.getFileOwner(testCID);
-      expect(fileOwnerAddr).to.equal(ethers.constants.AddressZero);
+      expect(fileOwnerAddr).to.equal(ethers.ZeroAddress);
     });
 
     it("Should remove file from all shared users", async function () {
@@ -377,7 +373,7 @@ describe("FileStorage", function () {
       await fileStorage.deleteFile(testCID);
       
       const permissions = await fileStorage.getPermissions(testCID, user1.address);
-      expect(permissions.toNumber()).to.equal(0);
+      expect(Number(permissions)).to.equal(0);
     });
 
     it("Should only allow owner to delete file", async function () {
