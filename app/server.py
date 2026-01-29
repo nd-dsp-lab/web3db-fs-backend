@@ -7,213 +7,17 @@ from web3 import Web3
 import json
 import os
 from dotenv import load_dotenv
-from pydantic import BaseModel
 from typing import Optional, List
 from permissions import READ, WRITE, DOWNLOAD, DELETE, SHARE, MOVE, CHANGE_OWNER, CHANGE_ROLE
-
-# Add this class definition here
-class TransactionRequest(BaseModel):
-    tx_hash: str
-
-# Adding model for share request
-class ShareRequest(BaseModel):
-    cid: str
-    to_address: str
-    user_address: str
-
-# Adding model for unshare request
-class UnshareRequest(BaseModel):
-    cid: str
-    to_address: str
-    user_address: str
-
-# Adding model for delete request
-class DeleteRequest(BaseModel):
-    cid: str
-    user_address: str
-    unpin_after: Optional[bool] = False
-
-# Load environment variables from .env file in smart-contracts folder
-# env_path = os.path.join(os.path.dirname(__file__), '../smart-contracts', '.env')
-# load_dotenv(dotenv_path=env_path)
-
-# Load environment variables from .env file in web3db-fs-backend folder
-env_path = os.path.join(os.path.dirname(__file__), '..', '.env')
-load_dotenv(dotenv_path=env_path)
+from models import TransactionRequest, ShareRequest, UnshareRequest, DeleteRequest
+from configure import configure_app, IPFS_API_URL, w3, contract
+from helpers import prepare_upload_transaction, prepare_share_transaction, prepare_unshare_transaction, prepare_delete_transaction, unpin_cid
 
 # This will be a simple fastAPI server that acts as an sgx node 
 app = FastAPI()
+configure_app(app)  # CORS + other startup steps
 
-
-# Allow frontend origin
-origins = [
-    "http://localhost:3000",
-    "http://fs.web3db.org",
-    "https://fs.web3db.org",
-    "https://proxy.web3db.org",
-]
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  #or ["*"] for all origins
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-
-print(f"server started listening on port 8090")
-IPFS_API_URL = "http://localhost:5001/api/v0"
-
-#connect to web3 via infura --> use environment variable
-infura_url = os.getenv("INFURA_URL") or f"https://sepolia.infura.io/v3/{os.getenv('INFURA_API_KEY')}"
-w3 = Web3(Web3.HTTPProvider(infura_url))
-try:
-    if w3.is_connected():
-        print("Web3 is connected:", True)
-except Exception as e:
-    print(f"Warning: Could not verify Web3 connection at startup: {e}")
-    print("Web3 will be tested when making transactions")
-
-# load contract from Will's deployed contract
-contract_path = os.path.join(os.path.dirname(__file__), '..', 'smart-contracts', 'artifacts', 'contracts', 'FileStorage.sol', 'FileStorage.json')
-with open(contract_path) as f:
-    abi = json.load(f)["abi"]
-if not abi:
-    raise Exception("ABI not found")
-
-contract_address = os.getenv("CONTRACT_ADDRESS")
-if not contract_address:
-    raise Exception("CONTRACT_ADDRESS environment variable not found")
-contract = w3.eth.contract(address=contract_address, abi=abi)
-if not contract:
-    raise Exception("Contract not found")
-print("Contract loaded:", contract.address)
-
-
-# return transaction data for frontend to sign
-def prepare_upload_transaction(cid: str, full_path: str, user_address: str, file_format: Optional[str] = None):
-    print(f"[prepare_upload_transaction] CID={cid}, full_path={full_path}")
-    try:
-        user_address = Web3.to_checksum_address(user_address)
-        nonce = w3.eth.get_transaction_count(user_address)
-        gas_price = w3.eth.gas_price
-        
-        # Build transaction but don't sign it
-        txn = contract.functions.uploadFile(cid, full_path, file_format or "").build_transaction({
-            'chainId': 11155111,    # required for Sepolia
-            'gasPrice': gas_price,
-            'nonce': nonce,
-            'from': user_address
-        })
-        
-        return txn
-    except Exception as e:
-        print("Transaction preparation failed:", e)
-        raise
-
-# preparing a share transaction for owner to sign
-def prepare_share_transaction(cid: str, to_address: str, user_address: str):
-    try:
-        user_address = Web3.to_checksum_address(user_address)
-        to_address = Web3.to_checksum_address(to_address)
-        nonce = w3.eth.get_transaction_count(user_address)
-        gas_price = w3.eth.gas_price
- 
-        # Ensure ownership
-        owner = contract.functions.getFileOwner(cid).call()
-        if owner.lower() != user_address.lower():
-            raise Exception("Only file owner can share file.")
-        
-        # Share permissions (READ + DOWNLOAD)
-        grant_mask = READ | DOWNLOAD
-
-        print(f"Sharing CID {cid} with {to_address} using mask {grant_mask}")
-
-        # Build transaction but don't sign it
-        txn = contract.functions.grant(cid, to_address, grant_mask).build_transaction({
-            'chainId': 11155111,    # required for Sepolia
-            'gasPrice': gas_price,
-            'nonce': nonce,
-            'from': user_address
-        })
-        
-        return txn
-    except Exception as e:
-        print("Share transaction preparation failed:", e)
-        raise
-
-# preparing an unshare transaction for owner to sign
-def prepare_unshare_transaction(cid: str, to_address: str, user_address: str):
-    try:
-        user_address = Web3.to_checksum_address(user_address)
-        to_address = Web3.to_checksum_address(to_address)
-        nonce = w3.eth.get_transaction_count(user_address)
-        gas_price = w3.eth.gas_price
-
-        # Ensure ownership
-        owner = contract.functions.getFileOwner(cid).call()
-        if owner.lower() != user_address.lower():
-            raise Exception("Only file owner can unshare file.")
-
-        # Unshare permissions (~READ + ~DOWNLOAD) -> bits are flipped in smart contract
-        revoke_mask = READ | DOWNLOAD
-
-        print(f"Unsharing CID {cid} with {to_address} using mask {revoke_mask}")
-
-        txn = contract.functions.revoke(cid, to_address, revoke_mask).build_transaction({
-            'chainId': 11155111,    # required for Sepolia
-            'gasPrice': gas_price,
-            'nonce': nonce,
-            'from': user_address
-        })
-
-        return txn
-    except Exception as e:
-        print("Unshare transaction preparation failed:", e)
-        raise
-
-# preparing a delete transaction for owner to sign
-def prepare_delete_transaction(cid: str, user_address: str):
-    try:
-        user_address = Web3.to_checksum_address(user_address)
-        nonce = w3.eth.get_transaction_count(user_address)
-        gas_price = w3.eth.gas_price
-
-        txn = contract.functions.deleteFile(cid).build_transaction({
-            'chainId': 11155111,
-            'gasPrice': gas_price,
-            'nonce': nonce,
-            'from': user_address
-        })
-        return txn
-    except Exception as e:
-        print("Delete transaction prep failed:", e)
-        raise
-
-# helper to unpin cid and trigger garbage collection on local IPFS node
-def unpin_cid(cid: str):
-    result = {"cid": cid, "unpin_ok": False, "unpin_response": None, "gc_ok": False, "gc_response": None}
-
-    try:
-        # remove pin
-        rm_response = requests.post(f"{IPFS_API_URL}/pin/rm", params={"arg": cid})
-        result["unpin_response"] = {"status_code": rm_response.status_code, "text": rm_response.text}
-        if rm_response.ok:
-            result["unpin_ok"] = True
-        else:
-            result["unpin_ok"] = False
-
-        # trigger garbage collection
-        gc_response = requests.post(f"{IPFS_API_URL}/repo/gc")
-        result["gc_response"] = {"status_code": gc_response.status_code, "text": gc_response.text}
-        result["gc_ok"] = gc_response.ok
-
-    except Exception as e:
-        result["error"] = str(e)
-
-    return result
-
+# --- Routes --- # (all helper functions in helper.py)
 
 # Register the file to ipfs and get a cid 
 @app.post("/upload")
@@ -377,7 +181,7 @@ def get_files(user_address: str = None):
             "ipfs_url": f"http://localhost:8080/ipfs/{cid}"    # need specific cid to find in ipfs
         })
     
-    print(f"User files: {structured_files}")
+    # print(f"User files: {structured_files}")
     return {"user_files": structured_files}
 
 # New endpoint to verify transaction was successful
