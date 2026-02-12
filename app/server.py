@@ -6,6 +6,7 @@ import io
 from web3 import Web3
 import json
 import os
+import httpx
 from dotenv import load_dotenv
 from typing import Optional, List
 from permissions import READ, WRITE, DOWNLOAD, DELETE, SHARE, MOVE, CHANGE_OWNER, CHANGE_ROLE
@@ -234,9 +235,9 @@ async def verify_upload(request: TransactionRequest):
 @app.get("/download/{cid}/{filename}")
 async def download_file_with_name(cid: str, filename: str):
     try:
-        # Get file from IPFS using POST
-        response = requests.post(f"{IPFS_API_URL}/cat", params={"arg": cid})
-        
+        async with httpx.AsyncClient() as client:
+            # Get file from IPFS using POST
+            response = await client.post(f"{IPFS_API_URL}/cat", params={"arg": cid})
         if response.status_code != 200:
             raise Exception(f"Failed to fetch file from IPFS: {response.status_code}")
         
@@ -283,13 +284,20 @@ async def delete_file(request: DeleteRequest):
         return {"error": str(e)}
 
 @app.get("/shared-users")
-def get_shared_users(cid: str):
+def get_shared_users(cid: str, user_address: str):
     try:
-        shared_users = contract.functions.getSharedUsers(cid).call()
-        return {"shared_with": shared_users}
+        owner = contract.functions.getFileOwner(cid).call()
+        shared_user = Web3.to_checksum_address(user_address)
+        owner_checksum = Web3.to_checksum_address(owner)
+
+        if shared_user.lower() == owner_checksum.lower():
+            shared_users = contract.functions.getSharedUsers(cid).call()
+            return {"shared_with": shared_users}
+        else:
+            return {"shared_by": owner}
     except Exception as e:
         print(f"Error fetching shared users for CID {cid}: {e}")
-        return {"shared_with": []}
+        return {"shared_with": [], "error": str(e)}
 
 if __name__ == "__main__":
     import uvicorn
