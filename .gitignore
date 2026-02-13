@@ -34,6 +34,7 @@ yarn-error.log*
 .idea/
 .vim/
 *.swp
+nohup.out
 
 # Test / coverage
 coverage/

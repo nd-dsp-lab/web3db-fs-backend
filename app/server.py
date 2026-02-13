@@ -25,9 +25,18 @@ configure_app(app)  # CORS + other startup steps
 async def upload_file(file: UploadFile, user_address: str = Form(...), folder_path: str = Form(""), file_format: Optional[str] = None):
     # Upload to IPFS first
     print(f"Uploading file {file.filename} to IPFS...")
-    files = {"file": (file.filename, await file.read())}
-    response = requests.post(f"{IPFS_API_URL}/add", files=files)
-    cid = response.json()["Hash"]
+    file_data = await file.read()
+    resp = requests.post(
+        f"{IPFS_API_URL}/add",
+        files={"file": (file.filename, file_data)},
+        stream=True,
+        timeout=10,
+    )
+    resp.raise_for_status()
+    line = resp.raw.readline()
+    resp.close()
+    cid = json.loads(line)["Hash"]
+
 
     # detecting file format if not given (if none detected, leave empty)
     if file_format is None:
