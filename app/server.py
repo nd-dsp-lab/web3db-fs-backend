@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, Form
+from fastapi import FastAPI, UploadFile, Form, Body
 import requests
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -9,9 +9,9 @@ import os
 from dotenv import load_dotenv
 from typing import Optional, List
 from permissions import READ, WRITE, DOWNLOAD, DELETE, SHARE, MOVE, CHANGE_OWNER, CHANGE_ROLE
-from models import TransactionRequest, ShareRequest, UnshareRequest, DeleteRequest
+from models import TransactionRequest, ShareRequest, UnshareRequest, DeleteRequest, DeleteFolder
 from configure import configure_app, IPFS_API_URL, w3, contract
-from helpers import prepare_upload_transaction, prepare_share_transaction, prepare_unshare_transaction, prepare_delete_transaction, unpin_cid
+from helpers import prepare_upload_transaction, prepare_share_transaction, prepare_unshare_transaction, prepare_delete_transaction, unpin_cid, prepare_delete_folder
 
 # This will be a simple fastAPI server that acts as an sgx node 
 app = FastAPI()
@@ -220,6 +220,18 @@ async def verify_upload(request: TransactionRequest):
                     response_payload["unpin_result"] = unpin_result
                 else:
                     response_payload["unpin_result"] = {"error": "Could not find cid in tx params"}
+            elif func_name == "cleanFolder" and receipt.status == 1:
+                    cids_to_unpin = func_params.get("cids")
+                    if cids_to_unpin:
+                        print(f">>> FOUND {len(cids_to_unpin)} CIDs to unpin")
+                        results = []
+                        for cid in cids_to_unpin:
+                            print(f">>> Unpinning: {cid}")
+                            res = unpin_cid(cid)
+                            results.append({"cid": cid, "result": res})
+                    else:
+                        print("cleanFolder transaction found, but CIDs list was empty.")
+                        response_payload["unpin_result"] = {"warning": "Empty CID list"}
         except Exception as e:
             print(f"Couldn't decode tx input for unpin: {e}")
             response_payload["decoded_function_error"] = str(e)
@@ -280,6 +292,46 @@ async def delete_file(request: DeleteRequest):
     
     except Exception as e:
         print(f"Failed to prep delete transaction: {e}")
+        return {"error": str(e)}
+
+# endpoint for deleting a folder
+@app.post("/delete-folder")
+async def delete_folder(request: DeleteFolder = Body(...)):
+    try:
+        user_address = Web3.to_checksum_address(request.user_address)
+        user_files = contract.functions.getUserFiles(user_address).call()
+        
+        target_cids = set()
+        search_path = request.folder_path.strip("/")
+        
+        is_principal = search_path == "" or "/" not in search_path
+        
+        print(f"Searching for files to delete in: {search_path}") 
+        
+        for file_data in user_files:
+            cid, full_path = file_data[0], file_data[1].strip("/")
+            
+            if full_path == search_path or full_path.startswith(search_path + "/"):
+                target_cids.add(cid)
+        final_cids = list(target_cids)    
+        txn = None
+        
+        if final_cids:
+            print(f"Found {len(final_cids)} CIDs to delete: {final_cids}")
+            txn = prepare_delete_folder(final_cids, user_address)
+        else:
+            print("No files found on-chain for this folder path.")
+
+        return {
+            "transaction": txn, 
+            "target_cids": target_cids, 
+            "is_principal": is_principal,
+            "count": len(target_cids)
+        }
+    
+    except Exception as e:
+        
+        print(f"Failed to prep deleting folders transaction: {e}")
         return {"error": str(e)}
 
 @app.get("/shared-users")
