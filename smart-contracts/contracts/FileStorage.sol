@@ -32,6 +32,7 @@ contract FileStorage {
     event FileDeleted(address indexed owner, string cid);
     event PermissionGranted(string indexed cid, address indexed user, uint256 permissions);
     event PermissionRevoked(string indexed cid, address indexed user, uint256 permissions);
+    event FileMoved(address indexed owner, string cid, string newPath);
 
     // CID => owner address
     mapping(string => address) public fileOwner;
@@ -242,6 +243,23 @@ contract FileStorage {
 
         // emit event
         emit FileDeleted(owner, cid);
+    }
+
+    function moveFile(string memory cid, string memory newPath) public onlyFileOwner(cid) {
+        // Update the metadata mapping
+        fileMetadata[cid].filename = newPath;
+
+        // Update the copy stored in the owner's userFiles array
+        address owner = msg.sender;
+        uint256 len = userFiles[owner].length;
+        for (uint256 i = 0; i < len; i++) {
+            if (keccak256(bytes(userFiles[owner][i].cid)) == keccak256(bytes(cid))) {
+                userFiles[owner][i].filename = newPath;
+                break;
+            }
+        }
+
+        emit FileMoved(owner, cid, newPath);
     }
 }
 // Not storing actual files -> that lives on IPFS

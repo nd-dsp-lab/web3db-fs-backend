@@ -19,3 +19,8 @@ class DeleteRequest(BaseModel):
     cid: str
     user_address: str
     unpin_after: Optional[bool] = False
+
+class MoveRequest(BaseModel):
+    cid: str
+    new_path: str
+    user_address: str

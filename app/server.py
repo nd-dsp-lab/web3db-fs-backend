@@ -10,13 +10,14 @@ import httpx
 from dotenv import load_dotenv
 from typing import Optional, List
 from permissions import READ, WRITE, DOWNLOAD, DELETE, SHARE, MOVE, CHANGE_OWNER, CHANGE_ROLE
-from models import TransactionRequest, ShareRequest, UnshareRequest, DeleteRequest
+from models import TransactionRequest, ShareRequest, UnshareRequest, DeleteRequest, MoveRequest
 from configure import configure_app, IPFS_API_URL, IPFS_DOWNLOAD_URL, w3, contract
 from helpers import (
     prepare_upload_transaction,
     prepare_share_transaction,
     prepare_unshare_transaction,
     prepare_delete_transaction,
+    prepare_move_transaction,
     unpin_cid
 )
 
@@ -308,6 +309,18 @@ async def delete_file(request: DeleteRequest):
     
     except Exception as e:
         print(f"Failed to prep delete transaction: {e}")
+        return {"error": str(e)}
+
+# endpoint for moving a file
+@app.post("/move")
+async def move_file(request: MoveRequest):
+    try:
+        txn = prepare_move_transaction(request.cid, request.new_path, request.user_address)
+        result = {"transaction": txn}
+        return result
+    
+    except Exception as e:
+        print(f"Failed to prep move transaction: {e}")
         return {"error": str(e)}
 
 @app.get("/shared-users")
