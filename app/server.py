@@ -1,7 +1,7 @@
 from fastapi import FastAPI, UploadFile, Form
 import requests
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 import io
 from web3 import Web3
 import json
@@ -11,8 +11,14 @@ from dotenv import load_dotenv
 from typing import Optional, List
 from permissions import READ, WRITE, DOWNLOAD, DELETE, SHARE, MOVE, CHANGE_OWNER, CHANGE_ROLE
 from models import TransactionRequest, ShareRequest, UnshareRequest, DeleteRequest
-from configure import configure_app, IPFS_API_URL, w3, contract
-from helpers import prepare_upload_transaction, prepare_share_transaction, prepare_unshare_transaction, prepare_delete_transaction, unpin_cid
+from configure import configure_app, IPFS_API_URL, IPFS_DOWNLOAD_URL, w3, contract
+from helpers import (
+    prepare_upload_transaction,
+    prepare_share_transaction,
+    prepare_unshare_transaction,
+    prepare_delete_transaction,
+    unpin_cid
+)
 
 # This will be a simple fastAPI server that acts as an sgx node 
 app = FastAPI()
@@ -23,9 +29,9 @@ configure_app(app)  # CORS + other startup steps
 # Register the file to ipfs and get a cid 
 @app.post("/upload")
 async def upload_file(file: UploadFile, user_address: str = Form(...), folder_path: str = Form(""), file_format: Optional[str] = None):
-    # Upload to IPFS first
-    print(f"Uploading file {file.filename} to IPFS...")
     file_data = await file.read()
+
+    # 1. Upload to IPFS to get CID first
     resp = requests.post(
         f"{IPFS_API_URL}/add",
         files={"file": (file.filename, file_data)},
@@ -37,6 +43,16 @@ async def upload_file(file: UploadFile, user_address: str = Form(...), folder_pa
     resp.close()
     cid = json.loads(line)["Hash"]
 
+    # 2. Early duplicate check — before building the tx
+    existing_owner = contract.functions.getFileOwner(cid).call()
+    if existing_owner != "0x0000000000000000000000000000000000000000":
+        unpin_cid(cid)  # unpin since we don't need it
+        return JSONResponse(status_code=409, content={
+            "success": False,
+            "reason": "file_already_exists",
+            "cid": cid,
+            "owner": existing_owner
+        })
 
     # detecting file format if not given (if none detected, leave empty)
     if file_format is None:
@@ -143,7 +159,7 @@ async def upload_folder(
 
 # get all the files from the user on the smart contract -> updated to return metadata from new smart contract
 @app.get("/")
-def get_files(user_address: str = None):
+async def get_files(user_address: str = None):
     print("Fetching user files from smart contract...")
     if user_address:
         user_address = Web3.to_checksum_address(user_address)
@@ -221,6 +237,7 @@ async def verify_upload(request: TransactionRequest):
             func_name = func_obj.fn_name if hasattr(func_obj, 'fn_name') else func_obj.function_identifier
             response_payload["decoded_function"] = {"name": func_name, "args": func_params}
 
+            # TODO: Make this a helper function (unpin_file(...) or something)
             # if it's a deleteFile call and tx succeeded -> unpin cid from local IPFS
             if func_name == "deleteFile" and receipt.status == 1:
                 cid_unpin = func_params.get("cid") or func_params.get("_cid") or None
@@ -240,13 +257,14 @@ async def verify_upload(request: TransactionRequest):
         print(f"Transaction verification failed: {e}")
         return {"success": False, "error": str(e)}
 
-# endpoint for downloading a file from ipfs
+# endpoint for downloading a file from ipfs -> updated
 @app.get("/download/{cid}/{filename}")
 async def download_file_with_name(cid: str, filename: str):
     try:
-        async with httpx.AsyncClient() as client:
-            # Get file from IPFS using POST
-            response = await client.post(f"{IPFS_API_URL}/cat", params={"arg": cid})
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            # Get file from IPFS using GET (updated from POST)
+            # response = await client.get(f"{IPFS_API_URL}/cat", params={"arg": cid})
+            response = await client.get(f"http://localhost:8082/ipfs/{cid}")
         if response.status_code != 200:
             raise Exception(f"Failed to fetch file from IPFS: {response.status_code}")
         

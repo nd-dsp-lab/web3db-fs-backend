@@ -32,9 +32,6 @@ contract FileStorage {
     event FileDeleted(address indexed owner, string cid);
     event PermissionGranted(string indexed cid, address indexed user, uint256 permissions);
     event PermissionRevoked(string indexed cid, address indexed user, uint256 permissions);
-    // Note for my understanding:
-    // An "event" in solidity is a way for smart contract to log data on the blockchain
-    // Cheaper than actually storing the data
 
     // CID => owner address
     mapping(string => address) public fileOwner;
@@ -153,10 +150,8 @@ contract FileStorage {
 
         fileMetadata[cid] = newFile;
         userFiles[msg.sender].push(newFile);
-
         fileOwner[cid] = msg.sender;
-
-        _permissions[cid][msg.sender] = 0xFF;   // owner automatically gets all permisssions
+        _permissions[cid][msg.sender] = 0xFF;
 
         emit FileUploaded(msg.sender, cid);
     }

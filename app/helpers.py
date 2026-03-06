@@ -3,6 +3,7 @@ import requests
 from web3 import Web3
 from configure import w3, contract, IPFS_API_URL
 from permissions import READ, WRITE, DOWNLOAD, DELETE, SHARE, MOVE, CHANGE_OWNER, CHANGE_ROLE
+from web3.datastructures import AttributeDict
 
 
 # return transaction data for frontend to sign
@@ -127,3 +128,8 @@ def unpin_cid(cid: str):
         result["error"] = str(e)
 
     return result
+
+# check if upload transaction succeeded
+# def upload_tx_succeeded(receipt: AttributeDict) -> tuple[bool, Optional[str]]:
+#     uploaded = contract.events.FileUploaded().process_receipt(receipt)
+#     return bool(uploaded), uploaded[0]["args"]["cid"] if uploaded else None
