@@ -19,3 +19,9 @@ class DeleteRequest(BaseModel):
     cid: str
     user_address: str
     unpin_after: Optional[bool] = False
+    
+class DeleteFolder(BaseModel):
+    folder_path: str
+    user_address: str
+    cids: Optional[List[str]] = []
+    unpin_after: Optional[bool] = False
