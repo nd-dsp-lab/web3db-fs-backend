@@ -215,7 +215,6 @@ contract FileStorage {
                 break;
             }
         }
-
         // remove from all users' sharedFiles list
         address[] memory sharedWith = sharedUsers[cid];
         for (uint256 i = 0; i < sharedWith.length; i++) {
@@ -261,5 +260,29 @@ contract FileStorage {
 
         emit FileMoved(owner, cid, newPath);
     }
+
+    //Delete folders and file metadata from owners list
+   function cleanFolder(string[] memory cids)public {
+        address user = msg.sender;
+        for (uint256 k =0; k<cids.length; k++){
+            string memory cid = cids[k];
+
+            if (fileOwner[cid] == user){
+                deleteFile(cid);
+            } else {
+                FileMetadata[] storage files = userFiles[user];
+                for (uint256 i = 0; i< files.length; i ++){
+                    if (keccak256(bytes(files[i].cid)) == keccak256(bytes(cid))) {
+                        if (i != files.length - 1) {
+                            files[i] = files[files.length - 1];
+                        }
+                        files.pop();
+                        break;
+                    }
+                }
+            }
+        }
+   }
 }
+
 // Not storing actual files -> that lives on IPFS

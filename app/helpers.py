@@ -126,6 +126,30 @@ def prepare_move_transaction(cid: str, new_path: str, user_address: str):
         return txn
     except Exception as e:
         print("Move transaction prep failed:", e)
+
+# preparing a delete folder transaction for owner to sign
+def prepare_delete_folder(cids: list[str], user_address: str):
+    if not cids:
+        # Avoid hitting the blockchain if there's nothing to delete
+        return None
+    try: 
+        user_address = Web3.to_checksum_address(user_address)
+        nonce = w3.eth.get_transaction_count(user_address)
+        base_txn = {
+            'chainId': sepolia_chain_id,
+            'nonce': nonce,
+            'from': user_address,
+        }
+
+        estimated_gas = contract.functions.cleanFolder(cids).estimate_gas(base_txn)
+        
+        base_txn['gas'] = int(estimated_gas * 1.1)
+
+        txn = contract.functions.cleanFolder(cids).build_transaction(base_txn)
+        
+        return txn
+    except Exception as e: 
+        print("Deleting folder prep failed", e)
         raise
 
 # helper to unpin cid and trigger garbage collection on local IPFS node

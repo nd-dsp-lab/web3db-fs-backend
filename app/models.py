@@ -24,3 +24,9 @@ class MoveRequest(BaseModel):
     cid: str
     new_path: str
     user_address: str
+
+class DeleteFolder(BaseModel):
+    folder_path: str
+    user_address: str
+    cids: Optional[List[str]] = []
+    unpin_after: Optional[bool] = False
