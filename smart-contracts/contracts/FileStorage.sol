@@ -32,9 +32,7 @@ contract FileStorage {
     event FileDeleted(address indexed owner, string cid);
     event PermissionGranted(string indexed cid, address indexed user, uint256 permissions);
     event PermissionRevoked(string indexed cid, address indexed user, uint256 permissions);
-    // Note for my understanding:
-    // An "event" in solidity is a way for smart contract to log data on the blockchain
-    // Cheaper than actually storing the data
+    event FileMoved(address indexed owner, string cid, string newPath);
 
     // CID => owner address
     mapping(string => address) public fileOwner;
@@ -153,10 +151,8 @@ contract FileStorage {
 
         fileMetadata[cid] = newFile;
         userFiles[msg.sender].push(newFile);
-
         fileOwner[cid] = msg.sender;
-
-        _permissions[cid][msg.sender] = 0xFF;   // owner automatically gets all permisssions
+        _permissions[cid][msg.sender] = 0xFF;
 
         emit FileUploaded(msg.sender, cid);
     }
@@ -246,6 +242,23 @@ contract FileStorage {
 
         // emit event
         emit FileDeleted(owner, cid);
+    }
+
+    function moveFile(string memory cid, string memory newPath) public onlyFileOwner(cid) {
+        // Update the metadata mapping
+        fileMetadata[cid].filename = newPath;
+
+        // Update the copy stored in the owner's userFiles array
+        address owner = msg.sender;
+        uint256 len = userFiles[owner].length;
+        for (uint256 i = 0; i < len; i++) {
+            if (keccak256(bytes(userFiles[owner][i].cid)) == keccak256(bytes(cid))) {
+                userFiles[owner][i].filename = newPath;
+                break;
+            }
+        }
+
+        emit FileMoved(owner, cid, newPath);
     }
 
     //Delete folders and file metadata from owners list

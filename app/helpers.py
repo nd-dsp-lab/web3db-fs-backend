@@ -3,7 +3,9 @@ import requests
 from web3 import Web3
 from configure import w3, contract, IPFS_API_URL
 from permissions import READ, WRITE, DOWNLOAD, DELETE, SHARE, MOVE, CHANGE_OWNER, CHANGE_ROLE
+from web3.datastructures import AttributeDict
 
+sepolia_chain_id = 11155111
 
 # return transaction data for frontend to sign
 def prepare_upload_transaction(cid: str, full_path: str, user_address: str, file_format: Optional[str] = None):
@@ -15,7 +17,7 @@ def prepare_upload_transaction(cid: str, full_path: str, user_address: str, file
         
         # Build transaction but don't sign it
         txn = contract.functions.uploadFile(cid, full_path, file_format or "").build_transaction({
-            'chainId': 11155111,    # required for Sepolia
+            'chainId': sepolia_chain_id,    # required for Sepolia
             'gasPrice': gas_price,
             'nonce': nonce,
             'from': user_address
@@ -46,7 +48,7 @@ def prepare_share_transaction(cid: str, to_address: str, user_address: str):
 
         # Build transaction but don't sign it
         txn = contract.functions.grant(cid, to_address, grant_mask).build_transaction({
-            'chainId': 11155111,    # required for Sepolia
+            'chainId': sepolia_chain_id,    # required for Sepolia
             'gasPrice': gas_price,
             'nonce': nonce,
             'from': user_address
@@ -76,7 +78,7 @@ def prepare_unshare_transaction(cid: str, to_address: str, user_address: str):
         print(f"Unsharing CID {cid} with {to_address} using mask {revoke_mask}")
 
         txn = contract.functions.revoke(cid, to_address, revoke_mask).build_transaction({
-            'chainId': 11155111,    # required for Sepolia
+            'chainId': sepolia_chain_id,    # required for Sepolia
             'gasPrice': gas_price,
             'nonce': nonce,
             'from': user_address
@@ -95,7 +97,7 @@ def prepare_delete_transaction(cid: str, user_address: str):
         gas_price = w3.eth.gas_price
 
         txn = contract.functions.deleteFile(cid).build_transaction({
-            'chainId': 11155111,
+            'chainId': sepolia_chain_id,
             'gasPrice': gas_price,
             'nonce': nonce,
             'from': user_address
@@ -104,6 +106,26 @@ def prepare_delete_transaction(cid: str, user_address: str):
     except Exception as e:
         print("Delete transaction prep failed:", e)
         raise
+
+def prepare_move_transaction(cid: str, new_path: str, user_address: str):
+    try:
+        user_address = Web3.to_checksum_address(user_address)
+        nonce = w3.eth.get_transaction_count(user_address)
+        gas_price = w3.eth.gas_price
+
+        owner = contract.functions.getFileOwner(cid).call()
+        if owner.lower() != user_address.lower():
+            raise Exception("Only file owner can move file.")   # could change in permissions in future
+        
+        txn = contract.functions.moveFile(cid, new_path).build_transaction({
+            'chainId': sepolia_chain_id,
+            'gasPrice': gas_price,
+            'nonce': nonce,
+            'from': user_address
+        })
+        return txn
+    except Exception as e:
+        print("Move transaction prep failed:", e)
 
 # preparing a delete folder transaction for owner to sign
 def prepare_delete_folder(cids: list[str], user_address: str):
@@ -114,7 +136,7 @@ def prepare_delete_folder(cids: list[str], user_address: str):
         user_address = Web3.to_checksum_address(user_address)
         nonce = w3.eth.get_transaction_count(user_address)
         base_txn = {
-            'chainId': 11155111,
+            'chainId': sepolia_chain_id,
             'nonce': nonce,
             'from': user_address,
         }
@@ -152,3 +174,8 @@ def unpin_cid(cid: str):
         result["error"] = str(e)
 
     return result
+
+# check if upload transaction succeeded
+# def upload_tx_succeeded(receipt: AttributeDict) -> tuple[bool, Optional[str]]:
+#     uploaded = contract.events.FileUploaded().process_receipt(receipt)
+#     return bool(uploaded), uploaded[0]["args"]["cid"] if uploaded else None
