@@ -1,7 +1,8 @@
 services:
   ipfs:
-    image: ipfs/go-ipfs:latest
+    image: ipfs/kubo:latest
     container_name: ipfs-public
+    network_mode: "host"
     restart: unless-stopped
     volumes:
       - ./data/ipfs:/data/ipfs
@@ -21,8 +22,12 @@ services:
         ipfs config --json Addresses.Swarm '[
           \"/ip4/0.0.0.0/tcp/4001\",
           \"/ip6/::/tcp/4001\",
-          \"/ip4/0.0.0.0/udp/4001/quic\",
-          \"/ip6/::/udp/4001/quic\"
+          \"/ip4/0.0.0.0/udp/4001/quic-v1\",
+          \"/ip6/::/udp/4001/quic-v1\"
+        ]' &&
+        ipfs config --json Addresses.Announce '[
+          \"/ip4/18.216.137.19/tcp/4000\",
+          \"/ip4/18.216.137.19/udp/4000/quic-v1\"
         ]' &&
         ipfs daemon --migrate --enable-gc --routing=dhtserver
       "
