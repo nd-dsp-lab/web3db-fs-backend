@@ -29,7 +29,7 @@ def configure_app(app):
 
 # Constant
 IPFS_API_URL = "http://localhost:5001/api/v0"
-IPFS_DOWNLOAD_URL = "http://localhost:80080/ipfs"
+IPFS_DOWNLOAD_URL = "http://localhost:8082/ipfs"
 
 # connect to web3 via infura --> use environment variable
 infura_url = os.getenv("INFURA_URL") or f"https://sepolia.infura.io/v3/{os.getenv('INFURA_API_KEY')}"
