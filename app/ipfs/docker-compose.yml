@@ -2,7 +2,7 @@ services:
   ipfs:
     image: ipfs/kubo:latest
     container_name: ipfs-public
-    network_mode: "host"
+    # network_mode: "host"
     restart: unless-stopped
     volumes:
       - ./data/ipfs:/data/ipfs
