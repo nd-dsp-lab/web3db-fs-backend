@@ -2,7 +2,7 @@ services:
   ipfs:
     image: ipfs/kubo:latest
     container_name: ipfs-public
-    network_mode: "host"
+    # network_mode: "host"
     restart: unless-stopped
     volumes:
       - ./data/ipfs:/data/ipfs
@@ -14,6 +14,7 @@ services:
     environment:
       - IPFS_PROFILE=server
       - IPFS_PATH=/data/ipfs
+      - ANNOUNCE_IP=${ANNOUNCE_IP:-}
     entrypoint: >
       sh -c "
         ipfs init --profile server || true &&
@@ -23,13 +24,26 @@ services:
           \"/ip4/0.0.0.0/tcp/4001\",
           \"/ip6/::/tcp/4001\",
           \"/ip4/0.0.0.0/udp/4001/quic-v1\",
-          \"/ip6/::/udp/4001/quic-v1\"
+          \"/ip6/::/udp/4001/quic-v1\",
+          \"/ip4/0.0.0.0/udp/4001/webrtc-direct\",
+          \"/ip6/::/udp/4001/webrtc-direct\"
         ]' &&
-        ipfs config --json Addresses.Announce '[
-          \"/ip4/18.216.137.19/tcp/4000\",
-          \"/ip4/18.216.137.19/udp/4000/quic-v1\"
-        ]' &&
-        ipfs daemon --migrate --enable-gc --routing=dhtserver
+        if [ -n \"$ANNOUNCE_IP\" ]; then
+          ipfs config --json Addresses.Announce \"[
+            \\\"/ip4/${ANNOUNCE_IP}/tcp/4001\\\",
+            \\\"/ip4/${ANNOUNCE_IP}/udp/4001/quic-v1\\\"
+          ]\"
+        else
+          ipfs config --json Addresses.Announce '[]'
+        fi &&
+        ipfs config --json Addresses.AppendAnnounce '[]' &&
+        ipfs config --json Swarm.DisableNatPortMap false &&
+        ipfs config --json Swarm.RelayClient '{\"Enabled\": true, \"StaticRelays\": []}' &&
+        ipfs config --json Swarm.RelayService '{\"Enabled\": false}' &&
+        ipfs config --json Swarm.EnableHolePunching true &&
+        ipfs config --json AutoNAT '{}' &&
+        ipfs config --json Discovery.MDNS '{\"Enabled\": false}' &&
+        ipfs daemon --migrate --enable-gc --routing=dhtclient
       "
 
 
