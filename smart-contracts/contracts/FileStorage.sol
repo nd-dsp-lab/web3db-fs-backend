@@ -75,6 +75,33 @@ contract FileStorage {
         onlyFileOwner(cid)
     {
         _permissions[cid][user] = _permissions[cid][user] & ~revokeMask;
+
+        if(_permissions[cid][user] == 0) {
+            // remove cid from sharedFiles[user]
+            string[] storage files = sharedFiles[user];
+            uint256 ulen = files.length;
+            for (uint256 j = 0; j < ulen; j++) {
+                if (keccak256(bytes(files[j])) == keccak256(bytes(cid))) {
+                    if (j != ulen - 1) {
+                        files[j] = files[ulen - 1];
+                    }
+                    files.pop();
+                    break;
+                }
+            }
+
+            // remove user from sharedUsers[cid]
+            address[] storage users = sharedUsers[cid];
+            uint256 slen = users.length;
+            for (uint256 i = 0; i < slen; i++) {
+                if (users[i] == user) {
+                    if (i != slen - 1) users[i] = users[slen - 1];
+                    users.pop();
+                    break;
+                }
+            }
+        }
+        
         emit PermissionRevoked(cid, user, revokeMask);
     }
 

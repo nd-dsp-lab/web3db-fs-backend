@@ -7,6 +7,7 @@ from web3 import Web3
 import json
 import os
 import httpx
+import uvicorn
 from dotenv import load_dotenv
 from typing import Optional, List
 from permissions import READ, WRITE, DOWNLOAD, DELETE, SHARE, MOVE, CHANGE_OWNER, CHANGE_ROLE
@@ -392,5 +393,4 @@ def get_shared_users(cid: str, user_address: str):
         return {"shared_with": [], "error": str(e)}
 
 if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8090)
+    uvicorn.run("server:app", host="0.0.0.0", port=8090, reload=True)
