@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 from typing import Optional, List
 from permissions import READ, WRITE, DOWNLOAD, DELETE, SHARE, MOVE, CHANGE_OWNER, CHANGE_ROLE
 from models import TransactionRequest, ShareRequest, UnshareRequest, DeleteRequest, MoveRequest, DeleteFolder
-from configure import configure_app, IPFS_API_URL, w3, contract
+from configure import configure_app, IPFS_API_URL, IPFS_GATEWAY_URL, w3, contract
 from helpers import (
     prepare_upload_transaction,
     prepare_share_transaction,
@@ -207,7 +207,7 @@ async def get_files(user_address: str = None):
             "owner": owner,
             "is_owner": is_owner,
             "permissions": permissions,
-            "ipfs_url": f"http://localhost:8080/ipfs/{cid}"    # need specific cid to find in ipfs
+            "ipfs_url": f"{IPFS_GATEWAY_URL}/{cid}"
         })
     
     # print(f"User files: {structured_files}")
@@ -279,7 +279,7 @@ async def download_file_with_name(cid: str, filename: str):
         async with httpx.AsyncClient(timeout=30.0) as client:
             # Get file from IPFS using GET (updated from POST)
             # response = await client.get(f"{IPFS_API_URL}/cat", params={"arg": cid})
-            response = await client.get(f"http://localhost:8082/ipfs/{cid}")
+            response = await client.get(f"{IPFS_GATEWAY_URL}/{cid}")
         if response.status_code != 200:
             raise Exception(f"Failed to fetch file from IPFS: {response.status_code}")
         
