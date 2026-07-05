@@ -25,6 +25,9 @@ class MoveRequest(BaseModel):
     new_path: str
     user_address: str
 
+class FundWalletRequest(BaseModel):
+    address: str
+
 class DeleteFolder(BaseModel):
     folder_path: str
     user_address: str
