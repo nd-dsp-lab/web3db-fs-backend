@@ -276,7 +276,9 @@ async def verify_upload(request: TransactionRequest):
 @app.get("/download/{cid}/{filename}")
 async def download_file_with_name(cid: str, filename: str):
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        # follow_redirects: kubo's gateway 301-redirects /ipfs/{cid} to the
+        # subdomain gateway ({cid}.ipfs.localhost)
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
             # Get file from IPFS using GET (updated from POST)
             # response = await client.get(f"{IPFS_API_URL}/cat", params={"arg": cid})
             response = await client.get(f"{IPFS_GATEWAY_URL}/{cid}")
