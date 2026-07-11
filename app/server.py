@@ -11,7 +11,7 @@ import uvicorn
 from dotenv import load_dotenv
 from typing import Optional, List
 from permissions import READ, WRITE, DOWNLOAD, DELETE, SHARE, MOVE, CHANGE_OWNER, CHANGE_ROLE
-from models import TransactionRequest, ShareRequest, UnshareRequest, DeleteRequest, MoveRequest, DeleteFolder, FundWalletRequest
+from models import TransactionRequest, ShareRequest, UnshareRequest, DeleteRequest, MoveRequest, DeleteFolder, FundWalletRequest, ResolveRecipientRequest
 from configure import configure_app, IPFS_API_URL, IPFS_GATEWAY_URL, w3, contract
 from helpers import (
     prepare_upload_transaction,
@@ -356,6 +356,86 @@ async def fund_wallet(request: FundWalletRequest):
     _save_funded_address(address)
     print(f"[fund-wallet] sent {FUND_AMOUNT_ETH} SepETH to {address}: {tx_hash.hex()}")
     return {"funded": True, "amount_eth": FUND_AMOUNT_ETH, "tx_hash": tx_hash.hex()}
+
+# --- Recipient resolution (share by email via Privy) ---
+PRIVY_API_BASE = "https://auth.privy.io/api/v1"
+
+def _privy_auth():
+    app_id = os.getenv("PRIVY_APP_ID")
+    secret = os.getenv("PRIVY_APP_SECRET")
+    if not app_id or not secret:
+        return None, None
+    return (app_id, secret), {"privy-app-id": app_id}
+
+def _extract_eth_address(privy_user: dict) -> Optional[str]:
+    accounts = privy_user.get("linked_accounts", [])
+    eth_wallets = [a for a in accounts if a.get("type") == "wallet" and a.get("chain_type") == "ethereum"]
+    if not eth_wallets:
+        return None
+    # Prefer the Privy embedded wallet over linked external ones
+    embedded = [w for w in eth_wallets if w.get("wallet_client") == "privy" or w.get("wallet_client_type") == "privy"]
+    return (embedded or eth_wallets)[0].get("address")
+
+@app.post("/resolve-recipient")
+async def resolve_recipient(request: ResolveRecipientRequest):
+    recipient = request.recipient.strip()
+
+    # Raw address: validate and pass through
+    if recipient.startswith("0x"):
+        try:
+            return {"address": Web3.to_checksum_address(recipient), "existed": True, "pregenerated": False}
+        except Exception:
+            return JSONResponse(status_code=400, content={"error": "Invalid Ethereum address"})
+
+    if "@" not in recipient:
+        return JSONResponse(status_code=400, content={"error": "Recipient must be an email or 0x address"})
+
+    auth, headers = _privy_auth()
+    if auth is None:
+        return JSONResponse(status_code=500, content={"error": "Privy API not configured on server"})
+
+    email = recipient.lower()
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        # Look up an existing user by email
+        lookup = await client.post(
+            f"{PRIVY_API_BASE}/users/email/address",
+            json={"address": email}, auth=auth, headers=headers,
+        )
+        if lookup.status_code == 200:
+            address = _extract_eth_address(lookup.json())
+            if not address:
+                return JSONResponse(status_code=404, content={"error": "User exists but has no Ethereum wallet"})
+            return {"address": address, "existed": True, "pregenerated": False}
+
+        # The email-address lookup only matches `email` accounts; users who
+        # signed in with Google have a `google_oauth` account instead. Scan
+        # the user list for a matching Google email before pregenerating.
+        all_users = await client.get(f"{PRIVY_API_BASE}/users", auth=auth, headers=headers)
+        if all_users.status_code == 200:
+            for u in all_users.json().get("data", []):
+                for acct in u.get("linked_accounts", []):
+                    if acct.get("type") == "google_oauth" and (acct.get("email") or "").lower() == email:
+                        address = _extract_eth_address(u)
+                        if address:
+                            return {"address": address, "existed": True, "pregenerated": False}
+
+        # Unknown email: pregenerate a user + embedded wallet they claim on first login
+        created = await client.post(
+            f"{PRIVY_API_BASE}/users",
+            json={
+                "create_ethereum_wallet": True,
+                "linked_accounts": [{"type": "email", "address": email}],
+            },
+            auth=auth, headers=headers,
+        )
+        if created.status_code not in (200, 201):
+            print(f"[resolve-recipient] Privy user creation failed: {created.status_code} {created.text}")
+            return JSONResponse(status_code=502, content={"error": "Could not create wallet for that email"})
+        address = _extract_eth_address(created.json())
+        if not address:
+            return JSONResponse(status_code=502, content={"error": "Wallet creation returned no address"})
+        print(f"[resolve-recipient] pregenerated wallet {address} for {email}")
+        return {"address": address, "existed": False, "pregenerated": True}
 
 # endpoint for sharing a file (frontend has to sign)
 @app.post("/share")
