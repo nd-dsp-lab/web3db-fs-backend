@@ -11,7 +11,7 @@ import uvicorn
 from dotenv import load_dotenv
 from typing import Optional, List
 from permissions import READ, WRITE, DOWNLOAD, DELETE, SHARE, MOVE, CHANGE_OWNER, CHANGE_ROLE
-from models import TransactionRequest, ShareRequest, UnshareRequest, DeleteRequest, MoveRequest, DeleteFolder, FundWalletRequest, ResolveRecipientRequest
+from models import TransactionRequest, ShareRequest, UnshareRequest, DeleteRequest, MoveRequest, DeleteFolder, FundWalletRequest, ResolveRecipientRequest, NotifyShareRequest
 from configure import configure_app, IPFS_API_URL, IPFS_GATEWAY_URL, w3, contract
 from helpers import (
     prepare_upload_transaction,
@@ -356,6 +356,49 @@ async def fund_wallet(request: FundWalletRequest):
     _save_funded_address(address)
     print(f"[fund-wallet] sent {FUND_AMOUNT_ETH} SepETH to {address}: {tx_hash.hex()}")
     return {"funded": True, "amount_eth": FUND_AMOUNT_ETH, "tx_hash": tx_hash.hex()}
+
+# --- Share notification email (Amazon SES over SMTP) ---
+SES_SMTP_HOST = os.getenv("SES_SMTP_HOST", "email-smtp.us-east-1.amazonaws.com")
+SES_SMTP_PORT = 587
+NOTIFY_FROM = os.getenv("NOTIFY_FROM", "Web3FS <notifications@fs.web3db.org>")
+APP_URL = os.getenv("APP_URL", "https://fs.web3db.org")
+
+@app.post("/notify-share")
+async def notify_share(request: NotifyShareRequest):
+    import smtplib
+    from email.mime.text import MIMEText
+
+    smtp_user = os.getenv("SES_SMTP_USER")
+    smtp_password = os.getenv("SES_SMTP_PASSWORD")
+    if not smtp_user or not smtp_password:
+        return JSONResponse(status_code=500, content={"error": "SES SMTP not configured on server"})
+
+    to_email = request.recipient_email.strip().lower()
+    if "@" not in to_email:
+        return JSONResponse(status_code=400, content={"error": "Invalid recipient email"})
+
+    sharer = request.sharer.strip()
+    body = (
+        f"{sharer} shared \"{request.filename}\" with you on Web3FS.\n\n"
+        f"Open {APP_URL} and sign in with this email address ({to_email}) to view the file.\n\n"
+        f"— Web3FS"
+    )
+    msg = MIMEText(body)
+    msg["Subject"] = f"{sharer} shared \"{request.filename}\" with you on Web3FS"
+    msg["From"] = NOTIFY_FROM
+    msg["To"] = to_email
+
+    try:
+        with smtplib.SMTP(SES_SMTP_HOST, SES_SMTP_PORT, timeout=20) as smtp:
+            smtp.starttls()
+            smtp.login(smtp_user, smtp_password)
+            smtp.sendmail(NOTIFY_FROM, [to_email], msg.as_string())
+        print(f"[notify-share] sent to {to_email} for file {request.filename}")
+        return {"sent": True}
+    except smtplib.SMTPException as e:
+        # Notification is best-effort: the share itself already succeeded
+        print(f"[notify-share] send failed: {e}")
+        return JSONResponse(status_code=502, content={"error": f"Email send failed: {e}"})
 
 # --- Recipient resolution (share by email via Privy) ---
 PRIVY_API_BASE = "https://auth.privy.io/api/v1"

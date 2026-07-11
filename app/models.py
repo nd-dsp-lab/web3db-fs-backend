@@ -31,6 +31,11 @@ class FundWalletRequest(BaseModel):
 class ResolveRecipientRequest(BaseModel):
     recipient: str
 
+class NotifyShareRequest(BaseModel):
+    recipient_email: str
+    filename: str
+    sharer: str
+
 class DeleteFolder(BaseModel):
     folder_path: str
     user_address: str
