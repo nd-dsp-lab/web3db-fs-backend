@@ -27,6 +27,21 @@ from helpers import (
 app = FastAPI()
 configure_app(app)  # CORS + other startup steps
 
+# CID -> size cache; content is immutable per CID so entries never go stale
+_file_size_cache = {}
+
+def get_file_size(cid: str) -> int:
+    if cid in _file_size_cache:
+        return _file_size_cache[cid]
+    try:
+        resp = requests.post(f"{IPFS_API_URL}/files/stat?arg=/ipfs/{cid}", timeout=3)
+        size = resp.json().get("CumulativeSize", 0) if resp.status_code == 200 else 0
+    except Exception:
+        size = 0
+    if size:  # don't cache failures so they can retry next listing
+        _file_size_cache[cid] = size
+    return size
+
 # --- Routes --- # (all helper functions in helper.py)
 
 # Register the file to ipfs and get a cid 
@@ -207,6 +222,7 @@ async def get_files(user_address: str = None):
             "owner": owner,
             "is_owner": is_owner,
             "permissions": permissions,
+            "size": get_file_size(cid),
             "ipfs_url": f"{IPFS_GATEWAY_URL}/{cid}"
         })
     
