@@ -11,7 +11,7 @@ import uvicorn
 from dotenv import load_dotenv
 from typing import Optional, List
 from permissions import READ, WRITE, DOWNLOAD, DELETE, SHARE, MOVE, CHANGE_OWNER, CHANGE_ROLE
-from models import TransactionRequest, ShareRequest, UnshareRequest, DeleteRequest, MoveRequest, DeleteFolder, FundWalletRequest, ResolveRecipientRequest, NotifyShareRequest
+from models import TransactionRequest, ShareRequest, UnshareRequest, DeleteRequest, MoveRequest, DeleteFolder, FundWalletRequest, ResolveRecipientRequest, NotifyShareRequest, DeleteBatchRequest
 from configure import configure_app, IPFS_API_URL, IPFS_GATEWAY_URL, w3, contract
 from helpers import (
     prepare_upload_transaction,
@@ -540,6 +540,28 @@ async def move_file(request: MoveRequest):
     
     except Exception as e:
         print(f"Failed to prep move transaction: {e}")
+
+# batch delete of explicit CIDs (multi-select delete-forever); reuses the
+# same cleanFolder contract call as folder deletion — one signed tx
+@app.post("/delete-batch")
+async def delete_batch(request: DeleteBatchRequest = Body(...)):
+    try:
+        user_address = Web3.to_checksum_address(request.user_address)
+        # only allow CIDs the user actually owns
+        owned = []
+        for cid in set(request.cids):
+            try:
+                owner = contract.functions.getFileOwner(cid).call()
+            except Exception:
+                continue
+            if owner.lower() == user_address.lower():
+                owned.append(cid)
+
+        txn = prepare_delete_folder(owned, user_address) if owned else None
+        return {"transaction": txn, "count": len(owned)}
+    except Exception as e:
+        print(f"Failed to prep batch delete transaction: {e}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 # endpoint for deleting a folder
 @app.post("/delete-folder")

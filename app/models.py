@@ -41,3 +41,7 @@ class DeleteFolder(BaseModel):
     user_address: str
     cids: Optional[List[str]] = []
     unpin_after: Optional[bool] = False
+
+class DeleteBatchRequest(BaseModel):
+    cids: List[str]
+    user_address: str
