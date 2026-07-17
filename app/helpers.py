@@ -7,13 +7,19 @@ from web3.datastructures import AttributeDict
 
 sepolia_chain_id = 11155111
 
+# Price gas 25% above the node's quote. The quote lags the network (and
+# Infura can serve stale reads), which left transactions stuck in the
+# mempool; the margin also lets a retry replace a stuck tx at the same nonce.
+def _gas_price():
+    return int(w3.eth.gas_price * 1.25)
+
 # return transaction data for frontend to sign
 def prepare_upload_transaction(cid: str, full_path: str, user_address: str, file_format: Optional[str] = None):
     print(f"[prepare_upload_transaction] CID={cid}, full_path={full_path}")
     try:
         user_address = Web3.to_checksum_address(user_address)
         nonce = w3.eth.get_transaction_count(user_address)
-        gas_price = w3.eth.gas_price
+        gas_price = _gas_price()
         
         # Build transaction but don't sign it
         txn = contract.functions.uploadFile(cid, full_path, file_format or "").build_transaction({
@@ -34,7 +40,7 @@ def prepare_share_transaction(cid: str, to_address: str, user_address: str):
         user_address = Web3.to_checksum_address(user_address)
         to_address = Web3.to_checksum_address(to_address)
         nonce = w3.eth.get_transaction_count(user_address)
-        gas_price = w3.eth.gas_price
+        gas_price = _gas_price()
  
         # Ensure ownership
         owner = contract.functions.getFileOwner(cid).call()
@@ -65,7 +71,7 @@ def prepare_unshare_transaction(cid: str, to_address: str, user_address: str):
         user_address = Web3.to_checksum_address(user_address)
         to_address = Web3.to_checksum_address(to_address)
         nonce = w3.eth.get_transaction_count(user_address)
-        gas_price = w3.eth.gas_price
+        gas_price = _gas_price()
 
         # Ensure ownership
         owner = contract.functions.getFileOwner(cid).call()
@@ -94,7 +100,7 @@ def prepare_delete_transaction(cid: str, user_address: str):
     try:
         user_address = Web3.to_checksum_address(user_address)
         nonce = w3.eth.get_transaction_count(user_address)
-        gas_price = w3.eth.gas_price
+        gas_price = _gas_price()
 
         txn = contract.functions.deleteFile(cid).build_transaction({
             'chainId': sepolia_chain_id,
@@ -111,7 +117,7 @@ def prepare_move_transaction(cid: str, new_path: str, user_address: str):
     try:
         user_address = Web3.to_checksum_address(user_address)
         nonce = w3.eth.get_transaction_count(user_address)
-        gas_price = w3.eth.gas_price
+        gas_price = _gas_price()
 
         owner = contract.functions.getFileOwner(cid).call()
         if owner.lower() != user_address.lower():
