@@ -49,9 +49,11 @@ def get_file_size(cid: str) -> int:
 async def upload_file(file: UploadFile, user_address: str = Form(...), folder_path: str = Form(""), file_format: Optional[str] = None):
     file_data = await file.read()
 
-    # 1. Upload to IPFS to get CID first
+    # 1. Add to IPFS unpinned — just to compute the CID. Pinning is deferred
+    # until the duplicate check passes, so a rejected duplicate never touches
+    # the original owner's pin (unpinning here used to cause GC data loss).
     resp = requests.post(
-        f"{IPFS_API_URL}/add",
+        f"{IPFS_API_URL}/add?pin=false",
         files={"file": (file.filename, file_data)},
         stream=True,
         timeout=10,
@@ -61,16 +63,18 @@ async def upload_file(file: UploadFile, user_address: str = Form(...), folder_pa
     resp.close()
     cid = json.loads(line)["Hash"]
 
-    # 2. Early duplicate check — before building the tx
+    # 2. Early duplicate check — before pinning or building the tx
     existing_owner = contract.functions.getFileOwner(cid).call()
     if existing_owner != "0x0000000000000000000000000000000000000000":
-        unpin_cid(cid)  # unpin since we don't need it
         return JSONResponse(status_code=409, content={
             "success": False,
             "reason": "file_already_exists",
             "cid": cid,
             "owner": existing_owner
         })
+
+    # New content — pin it now
+    requests.post(f"{IPFS_API_URL}/pin/add?arg={cid}", timeout=30).raise_for_status()
 
     # detecting file format if not given (if none detected, leave empty)
     if file_format is None:
@@ -126,8 +130,9 @@ async def upload_folder(
 
         # Read file and upload to IPFS
         file_data = await file.read()
+        # Add unpinned — pin only after the duplicate checks pass (see /upload)
         ipfs_response = requests.post(
-            f"{IPFS_API_URL}/add",
+            f"{IPFS_API_URL}/add?pin=false",
             files={"file": (file.filename, file_data)}
         )
         if ipfs_response.status_code != 200:
@@ -181,6 +186,8 @@ async def upload_folder(
             print(f"  Failed to prepare tx for {actual_filename}: {e}")
             skipped_files.append({"filename": actual_filename, "cid": cid, "error": str(e)})
             continue
+        # Accepted for upload — pin the content now
+        requests.post(f"{IPFS_API_URL}/pin/add?arg={cid}", timeout=30)
         uploaded_files.append({
             "cid": cid,
             "filename": actual_filename,  # Use actual_filename here too
