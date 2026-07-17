@@ -341,6 +341,26 @@ async def download_file_with_name(cid: str, filename: str):
 THUMBS_DIR = os.path.join(os.path.dirname(__file__), "thumbs")
 THUMB_SIZE = (320, 320)
 
+def render_text_thumbnail(content: bytes):
+    """Drive-style page snippet for text files. Raises if content isn't UTF-8 text."""
+    from PIL import Image, ImageDraw, ImageFont
+
+    text = content[:8192].decode("utf-8")  # raises UnicodeDecodeError on binary
+    img = Image.new("RGB", THUMB_SIZE, "#ffffff")
+    draw = ImageDraw.Draw(img)
+    try:
+        font = ImageFont.truetype("Menlo.ttc", 13)
+    except OSError:
+        font = ImageFont.load_default(size=13)
+
+    x, y, line_height = 16, 14, 17
+    for line in text.splitlines():
+        if y > THUMB_SIZE[1] - line_height:
+            break
+        draw.text((x, y), line.replace("\t", "    ")[:60], fill="#3c4043", font=font)
+        y += line_height
+    return img
+
 @app.get("/thumbnail/{cid}")
 async def get_thumbnail(cid: str):
     from PIL import Image
@@ -368,8 +388,11 @@ async def get_thumbnail(cid: str):
                 img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
                 doc.close()
             else:
-                img = Image.open(io.BytesIO(content))
-                img = img.convert("RGB")  # flatten alpha/palette for JPEG
+                try:
+                    img = Image.open(io.BytesIO(content))
+                    img = img.convert("RGB")  # flatten alpha/palette for JPEG
+                except Exception:
+                    img = render_text_thumbnail(content)  # raises if binary
             img.thumbnail(THUMB_SIZE)
             img.save(thumb_path, "JPEG", quality=70)
         except Exception as e:
