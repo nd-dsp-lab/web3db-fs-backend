@@ -191,10 +191,12 @@ async def get_files(user_address: str = None):
         file_format = file_data[2]
         timestamp = file_data[3]
         
-        levels = full_path.split("/")
+        # Paths may arrive with or without a leading slash (move sends "/a/b",
+        # uploads store "a/b") — drop empty segments so both parse the same.
+        levels = [p for p in full_path.split("/") if p]
 
-        if len(levels) == 1:
-            filename = levels[0]
+        if len(levels) <= 1:
+            filename = levels[0] if levels else full_path
             folder_path = "/"
         else:
             filename = levels[-1]
