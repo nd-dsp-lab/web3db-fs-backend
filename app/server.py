@@ -333,6 +333,55 @@ async def download_file_with_name(cid: str, filename: str):
         print(f"Download failed: {e}")
         return {"error": f"Failed to download file: {str(e)}"}
 
+# --- Thumbnails ---
+# Small JPEG previews for image files, generated once per CID with Pillow
+# and cached on disk (content is immutable per CID, so the cache never
+# stales). Non-image or undecodable content returns 404 and the frontend
+# keeps its file-type icon.
+THUMBS_DIR = os.path.join(os.path.dirname(__file__), "thumbs")
+THUMB_SIZE = (320, 320)
+
+@app.get("/thumbnail/{cid}")
+async def get_thumbnail(cid: str):
+    from PIL import Image
+
+    # CIDs are base32/base58 alphanumeric — reject anything path-like
+    if not cid.isalnum():
+        return JSONResponse(status_code=400, content={"error": "Invalid CID"})
+
+    os.makedirs(THUMBS_DIR, exist_ok=True)
+    thumb_path = os.path.join(THUMBS_DIR, f"{cid}.jpg")
+
+    if not os.path.exists(thumb_path):
+        try:
+            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+                response = await client.get(f"{IPFS_GATEWAY_URL}/{cid}")
+            if response.status_code != 200:
+                return JSONResponse(status_code=404, content={"error": "File not found on IPFS"})
+
+            content = response.content
+            if content[:5] == b"%PDF-":
+                # First page of a PDF, rendered via PyMuPDF
+                import fitz
+                doc = fitz.open(stream=content, filetype="pdf")
+                pix = doc[0].get_pixmap(matrix=fitz.Matrix(0.5, 0.5))
+                img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+                doc.close()
+            else:
+                img = Image.open(io.BytesIO(content))
+                img = img.convert("RGB")  # flatten alpha/palette for JPEG
+            img.thumbnail(THUMB_SIZE)
+            img.save(thumb_path, "JPEG", quality=70)
+        except Exception as e:
+            print(f"Thumbnail generation failed for {cid}: {e}")
+            return JSONResponse(status_code=404, content={"error": "Not a previewable image"})
+
+    return StreamingResponse(
+        open(thumb_path, "rb"),
+        media_type="image/jpeg",
+        headers={"Cache-Control": "private, max-age=86400"}
+    )
+
 # --- Wallet funding (gas drip for embedded/email-login wallets) ---
 FUND_AMOUNT_ETH = 0.25
 FUND_BALANCE_THRESHOLD_ETH = 0.005
