@@ -48,3 +48,4 @@ app/ipfs/data/**
 # don't accidentally track keystore files (sensitive)
 app/ipfs/data/ipfs/keystore/
 app/funded_addresses.json
+app/thumbs/
