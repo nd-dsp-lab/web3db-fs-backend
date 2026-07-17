@@ -117,6 +117,7 @@ async def upload_folder(
     print(f"Uploading {len(files)} files from folder for {user_address}...")
 
     uploaded_files = []
+    skipped_files = []
 
     for idx, file in enumerate(files):
         print(idx, file.filename)
@@ -148,17 +149,38 @@ async def upload_folder(
 
         # Extract just the filename without the folder path
         actual_filename = file.filename.split('/')[-1]
-        print(f"  Actual filename extracted: {actual_filename}")
-        
-        # Build and prepare blockchain transaction for each file
+
+        # Skip files whose content already exists on-chain — building the tx
+        # would revert with "File already exists" and 500 the whole batch
+        try:
+            existing_owner = contract.functions.getFileOwner(cid).call()
+        except Exception:
+            existing_owner = "0x0000000000000000000000000000000000000000"
+        if existing_owner != "0x0000000000000000000000000000000000000000":
+            print(f"  Skipping {actual_filename}: CID already owned by {existing_owner}")
+            skipped_files.append({"filename": actual_filename, "cid": cid, "owner": existing_owner})
+            continue
+        # ...and identical files within the same batch (same CID twice)
+        if any(u["cid"] == cid for u in uploaded_files):
+            print(f"  Skipping {actual_filename}: duplicate content within this batch")
+            skipped_files.append({"filename": actual_filename, "cid": cid, "owner": user_address})
+            continue
+
+        # Build and prepare blockchain transaction for each file. Nonces are
+        # offset per tx so the frontend can sign them back-to-back.
         full_path = folder_path  # already complete
         print(f"  Preparing upload transaction for {actual_filename} at path {full_path}")
-        filename = full_path.split("/")[-1]
-        transaction_data = prepare_upload_transaction(
-            cid,
-            full_path,
-            user_address
-        )
+        try:
+            transaction_data = prepare_upload_transaction(
+                cid,
+                full_path,
+                user_address,
+                nonce_offset=len(uploaded_files)
+            )
+        except Exception as e:
+            print(f"  Failed to prepare tx for {actual_filename}: {e}")
+            skipped_files.append({"filename": actual_filename, "cid": cid, "error": str(e)})
+            continue
         uploaded_files.append({
             "cid": cid,
             "filename": actual_filename,  # Use actual_filename here too
@@ -166,13 +188,11 @@ async def upload_folder(
             "transaction": transaction_data
         })
 
-    # Return the last file's data (or modify to return all)
     return {
-        "user": user_address, 
-        "cid": cid, 
-        "uploaded_files": uploaded_files, 
-        "folder_path": full_path,
-        "transaction": transaction_data  # Frontend will sign this
+        "user": user_address,
+        "uploaded_files": uploaded_files,
+        "skipped_files": skipped_files,
+        # Frontend signs every uploaded_files[i].transaction sequentially
     }
 
 # get all the files from the user on the smart contract -> updated to return metadata from new smart contract

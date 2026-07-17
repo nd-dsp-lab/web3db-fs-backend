@@ -14,11 +14,13 @@ def _gas_price():
     return int(w3.eth.gas_price * 1.25)
 
 # return transaction data for frontend to sign
-def prepare_upload_transaction(cid: str, full_path: str, user_address: str, file_format: Optional[str] = None):
+# nonce_offset: batch endpoints prepare several txs before any is broadcast,
+# so the chain nonce doesn't advance between calls — offset each tx manually.
+def prepare_upload_transaction(cid: str, full_path: str, user_address: str, file_format: Optional[str] = None, nonce_offset: int = 0):
     print(f"[prepare_upload_transaction] CID={cid}, full_path={full_path}")
     try:
         user_address = Web3.to_checksum_address(user_address)
-        nonce = w3.eth.get_transaction_count(user_address)
+        nonce = w3.eth.get_transaction_count(user_address) + nonce_offset
         gas_price = _gas_price()
         
         # Build transaction but don't sign it
