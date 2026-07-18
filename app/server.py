@@ -360,7 +360,16 @@ async def get_files(user_address: str = None):
             permissions = contract.functions.getPermissions(cid, user_address).call()
         except Exception:
             permissions = 0
-        
+
+        # Who the file is shared with (owner only) — drives the Sharing
+        # column and the shared-folder icon (folder = intersection of these)
+        shared_with = []
+        if is_owner:
+            try:
+                shared_with = contract.functions.getSharedUsers(cid).call()
+            except Exception as e:
+                print(f"getSharedUsers failed for {cid}: {e}")
+
         structured_files.append({
             "cid": cid,        # cid
             "filename": filename,   # filename
@@ -370,6 +379,7 @@ async def get_files(user_address: str = None):
             "owner": owner,
             "is_owner": is_owner,
             "permissions": permissions,
+            "shared_with": shared_with,
             "size": get_file_size(cid),
             "ipfs_url": f"{IPFS_GATEWAY_URL}/{cid}"
         })
