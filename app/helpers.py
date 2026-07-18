@@ -135,6 +135,23 @@ def prepare_move_transaction(cid: str, new_path: str, user_address: str):
     except Exception as e:
         print("Move transaction prep failed:", e)
 
+# Batch upload: one uploadFiles(cids, paths, formats) tx for folder upload
+def prepare_upload_batch_transaction(cids: list[str], paths: list[str], formats: list[str], user_address: str):
+    try:
+        user_address = Web3.to_checksum_address(user_address)
+        base_txn = {
+            'chainId': sepolia_chain_id,
+            'gasPrice': _gas_price(),
+            'nonce': w3.eth.get_transaction_count(user_address),
+            'from': user_address,
+        }
+        fn = contract.functions.uploadFiles(cids, paths, formats)
+        base_txn['gas'] = int(fn.estimate_gas(base_txn) * 1.1)
+        return fn.build_transaction(base_txn)
+    except Exception as e:
+        print("Batch upload prep failed:", e)
+        raise
+
 # Batch move: one moveFiles(cids, newPaths) tx for folder rename / bulk trash
 def prepare_move_batch_transaction(cids: list[str], new_paths: list[str], user_address: str):
     try:

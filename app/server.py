@@ -15,6 +15,7 @@ from models import TransactionRequest, ShareRequest, UnshareRequest, DeleteReque
 from configure import configure_app, IPFS_API_URL, IPFS_GATEWAY_URL, w3, contract
 from helpers import (
     prepare_upload_transaction,
+    prepare_upload_batch_transaction,
     prepare_share_transaction,
     prepare_unshare_transaction,
     prepare_delete_transaction,
@@ -241,35 +242,35 @@ async def upload_folder(
             skipped_files.append({"filename": actual_filename, "cid": cid, "owner": user_address})
             continue
 
-        # Build and prepare blockchain transaction for each file. Nonces are
-        # offset per tx so the frontend can sign them back-to-back.
-        full_path = folder_path  # already complete
-        print(f"  Preparing upload transaction for {actual_filename} at path {full_path}")
-        try:
-            transaction_data = prepare_upload_transaction(
-                cid,
-                full_path,
-                user_address,
-                nonce_offset=len(uploaded_files)
-            )
-        except Exception as e:
-            print(f"  Failed to prepare tx for {actual_filename}: {e}")
-            skipped_files.append({"filename": actual_filename, "cid": cid, "error": str(e)})
-            continue
         # Accepted for upload — pin the content now
         requests.post(f"{IPFS_API_URL}/pin/add?arg={cid}", timeout=30)
+        file_format = actual_filename.split(".")[-1] if "." in actual_filename else ""
         uploaded_files.append({
             "cid": cid,
             "filename": actual_filename,  # Use actual_filename here too
-            "folder_path": full_path,
-            "transaction": transaction_data
+            "folder_path": folder_path,   # already the complete path
+            "file_format": file_format,
         })
+
+    # One uploadFiles(cids, paths, formats) tx registers the whole batch —
+    # a single signature regardless of file count
+    transaction = None
+    if uploaded_files:
+        try:
+            transaction = prepare_upload_batch_transaction(
+                [u["cid"] for u in uploaded_files],
+                [u["folder_path"] for u in uploaded_files],
+                [u["file_format"] for u in uploaded_files],
+                user_address,
+            )
+        except Exception as e:
+            return JSONResponse(status_code=500, content={"error": f"Batch tx prep failed: {e}"})
 
     return {
         "user": user_address,
+        "transaction": transaction,  # frontend signs this once
         "uploaded_files": uploaded_files,
         "skipped_files": skipped_files,
-        # Frontend signs every uploaded_files[i].transaction sequentially
     }
 
 # get all the files from the user on the smart contract -> updated to return metadata from new smart contract
@@ -431,6 +432,52 @@ async def download_file_with_name(cid: str, filename: str, x_auth_token: Optiona
     except Exception as e:
         print(f"Download failed: {e}")
         return {"error": f"Failed to download file: {str(e)}"}
+
+# Download a whole folder as a zip. Token-authenticated; includes only files
+# the token's address owns under that path (shared files keep the owner's
+# paths, so they don't belong to this user's folder tree).
+@app.get("/download-folder")
+async def download_folder_zip(path: str, x_auth_token: Optional[str] = Header(None)):
+    import zipfile
+
+    address = verify_auth_token(x_auth_token or "")
+    if not address:
+        return JSONResponse(status_code=401, content={"error": "Missing or invalid auth token"})
+
+    prefix = "/" + "/".join(p for p in path.split("/") if p)
+    if prefix == "/":
+        return JSONResponse(status_code=400, content={"error": "Invalid folder path"})
+
+    checksum = Web3.to_checksum_address(address)
+    entries = []
+    for f in contract.functions.getUserFiles(checksum).call():
+        cid, full_path = f[0], f[1]
+        norm = "/" + "/".join(p for p in full_path.split("/") if p)
+        if not norm.startswith(prefix + "/"):
+            continue
+        if contract.functions.getFileOwner(cid).call().lower() != address.lower():
+            continue  # shared-with-me entry, not part of this user's tree
+        entries.append((cid, norm[len(prefix) + 1:]))
+
+    if not entries:
+        return JSONResponse(status_code=404, content={"error": "Folder is empty"})
+
+    folder_name = prefix.rsplit("/", 1)[-1]
+    buf = io.BytesIO()
+    async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for cid, rel in entries:
+                response = await client.get(f"{IPFS_GATEWAY_URL}/{cid}")
+                if response.status_code == 200:
+                    zf.writestr(f"{folder_name}/{rel}", response.content)
+                else:
+                    print(f"download-folder: skipping {cid} ({rel}), gateway {response.status_code}")
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename={folder_name}.zip"},
+    )
 
 # --- Thumbnails ---
 # Small JPEG previews for image files, generated once per CID with Pillow

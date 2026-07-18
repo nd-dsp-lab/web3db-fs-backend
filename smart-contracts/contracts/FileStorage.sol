@@ -165,10 +165,9 @@ contract FileStorage {
         return hasAll(cid, user, CHANGE_ROLE);
     }
 
-    // Upload a file and store its IPFS CID -> takes file ID (from IPFS) and adds to user's list
-    function uploadFile(string memory cid, string memory filename, string memory fileFormat) public {
+    function _uploadFile(string memory cid, string memory filename, string memory fileFormat) internal {
         require(fileOwner[cid] == address(0), "File already exists");
-        
+
         FileMetadata memory newFile = FileMetadata({
             cid: cid,
             filename: filename,
@@ -182,6 +181,19 @@ contract FileStorage {
         _permissions[cid][msg.sender] = 0xFF;
 
         emit FileUploaded(msg.sender, cid);
+    }
+
+    // Upload a file and store its IPFS CID -> takes file ID (from IPFS) and adds to user's list
+    function uploadFile(string memory cid, string memory filename, string memory fileFormat) public {
+        _uploadFile(cid, filename, fileFormat);
+    }
+
+    // Batch upload: register many files in one transaction (folder upload)
+    function uploadFiles(string[] memory cids, string[] memory filenames, string[] memory fileFormats) public {
+        require(cids.length == filenames.length && cids.length == fileFormats.length, "Length mismatch");
+        for (uint256 i = 0; i < cids.length; i++) {
+            _uploadFile(cids[i], filenames[i], fileFormats[i]);
+        }
     }
 
     // Getter function to retrieve files for a user based on address -> updated for both owned and shared files

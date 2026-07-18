@@ -389,6 +389,32 @@ describe("FileStorage", function () {
     });
   });
 
+  describe("uploadFiles (batch)", function () {
+    it("Should register several files in one transaction", async function () {
+      await fileStorage.uploadFiles(
+        ["QmBatchUp1", "QmBatchUp2"],
+        ["/docs/a.txt", "/docs/sub/b.txt"],
+        ["txt", "txt"]
+      );
+      const files = await fileStorage.getUserFiles(owner.address);
+      expect(files.map((f) => f.filename)).to.have.members(["/docs/a.txt", "/docs/sub/b.txt"]);
+      expect(await fileStorage.getFileOwner("QmBatchUp1")).to.equal(owner.address);
+      expect(await fileStorage.getPermissions("QmBatchUp2", owner.address)).to.equal(0xFF);
+    });
+
+    it("Should reject mismatched array lengths", async function () {
+      await expect(fileStorage.uploadFiles(["QmA", "QmB"], ["/a.txt"], ["txt", "txt"]))
+        .to.be.revertedWith("Length mismatch");
+    });
+
+    it("Should revert entirely on a duplicate cid in the batch", async function () {
+      await fileStorage.uploadFile("QmDup", "/dup.txt", "txt");
+      await expect(fileStorage.uploadFiles(["QmNew", "QmDup"], ["/n.txt", "/d.txt"], ["txt", "txt"]))
+        .to.be.revertedWith("File already exists");
+      expect(await fileStorage.getFileOwner("QmNew")).to.equal(ethers.ZeroAddress);
+    });
+  });
+
   describe("moveFiles (batch)", function () {
     beforeEach(async function () {
       await fileStorage.uploadFile("QmMove1", "/proj/a.txt", "txt");
