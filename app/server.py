@@ -25,6 +25,8 @@ from helpers import (
     prepare_move_batch_transaction,
     prepare_delete_folder,
     unpin_cid,
+    folder_share_set,
+    prepare_inherited_grant_transactions,
 )
 
 # This will be a simple fastAPI server that acts as an sgx node 
@@ -173,15 +175,29 @@ async def upload_file(file: UploadFile, user_address: str = Form(...), folder_pa
     
     # Prepare transaction for frontend to sign
     transaction_data = prepare_upload_transaction(cid, full_path, user_address, file_format)
-    
+
+    # Inherited folder sharing: if the destination folder is shared, prepare
+    # grant txs (one per recipient) for the frontend to sign after the upload
+    share_transactions, auto_shared_with = [], []
+    if folder_path:
+        try:
+            auto_shared_with = folder_share_set(user_address, folder_path)
+            if auto_shared_with:
+                share_transactions = prepare_inherited_grant_transactions([cid], auto_shared_with, user_address)
+        except Exception as e:
+            print(f"[upload] inherited share prep failed: {e}")
+            share_transactions, auto_shared_with = [], []
+
     return {
-        "user": user_address, 
-        "cid": cid, 
+        "user": user_address,
+        "cid": cid,
         "filename": file.filename,  # leaf for UI
         "folder_path": "/" + folder_path if folder_path else "/",
         "full_path": full_path,
         "fileformat": file_format,
-        "transaction": transaction_data  # Frontend will sign this
+        "transaction": transaction_data,  # Frontend will sign this
+        "share_transactions": share_transactions,
+        "auto_shared_with": auto_shared_with,
     }
 
 
@@ -268,11 +284,36 @@ async def upload_folder(
         except Exception as e:
             return JSONResponse(status_code=500, content={"error": f"Batch tx prep failed: {e}"})
 
+    # Inherited folder sharing: derive the drop target as the deepest common
+    # ancestor folder of the batch (entries' folder_path is the full file
+    # path, so drop the filename segment), then grant every new cid to the
+    # folder's share set — one grantFiles tx per recipient.
+    share_transactions, auto_shared_with = [], []
+    if uploaded_files:
+        try:
+            folder_lists = [[p for p in u["folder_path"].split("/") if p][:-1] for u in uploaded_files]
+            common = folder_lists[0]
+            for fl in folder_lists[1:]:
+                n = 0
+                while n < len(common) and n < len(fl) and common[n] == fl[n]:
+                    n += 1
+                common = common[:n]
+            if common:
+                auto_shared_with = folder_share_set(user_address, "/".join(common))
+                if auto_shared_with:
+                    share_transactions = prepare_inherited_grant_transactions(
+                        [u["cid"] for u in uploaded_files], auto_shared_with, user_address)
+        except Exception as e:
+            print(f"[upload-folder] inherited share prep failed: {e}")
+            share_transactions, auto_shared_with = [], []
+
     return {
         "user": user_address,
         "transaction": transaction,  # frontend signs this once
         "uploaded_files": uploaded_files,
         "skipped_files": skipped_files,
+        "share_transactions": share_transactions,
+        "auto_shared_with": auto_shared_with,
     }
 
 # get all the files from the user on the smart contract -> updated to return metadata from new smart contract

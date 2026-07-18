@@ -94,6 +94,70 @@ def prepare_share_batch_transaction(cids: list[str], to_address: str, user_addre
         print("Batch share prep failed:", e)
         raise
 
+# Inherited folder sharing: the users a folder is effectively shared with —
+# the intersection of sharedUsers across the owner's existing non-trash files
+# under folder_path. Walks up to parent folders when the folder itself has no
+# files yet (a freshly created subfolder inherits from its parent). Root is
+# never treated as shared, so uploads to "/" inherit nothing.
+def folder_share_set(user_address: str, folder_path: str) -> list[str]:
+    owner = Web3.to_checksum_address(user_address)
+    entries = contract.functions.getUserFiles(owner).call()
+
+    files = []  # (normalized folder, cid) — paths may or may not have a leading slash
+    for f in entries:
+        levels = [p for p in f[1].split("/") if p]
+        if not levels or levels[0] == ".trash":
+            continue
+        folder = "/" + "/".join(levels[:-1]) if len(levels) > 1 else "/"
+        files.append((folder, f[0]))
+
+    path = "/" + folder_path.strip("/")
+    while path != "/":
+        cids = [cid for fp, cid in files if fp == path or fp.startswith(path + "/")]
+        # getUserFiles also returns files shared *to* the owner — keep owned only
+        owned_cids = []
+        for cid in cids:
+            try:
+                if contract.functions.getFileOwner(cid).call().lower() == owner.lower():
+                    owned_cids.append(cid)
+            except Exception as e:
+                print(f"folder_share_set: getFileOwner failed for {cid}: {e}")
+        if owned_cids:
+            shared = None
+            for cid in owned_cids:
+                try:
+                    users = set(contract.functions.getSharedUsers(cid).call())
+                except Exception as e:
+                    print(f"folder_share_set: getSharedUsers failed for {cid}: {e}")
+                    users = set()
+                shared = users if shared is None else (shared & users)
+                if not shared:
+                    break
+            return sorted(shared or [])
+        path = path.rsplit("/", 1)[0] or "/"
+    return []
+
+# Grants for files being uploaded in the same nonce sequence. The files don't
+# exist on-chain yet, so ownership checks and gas estimation would both fail
+# ("Not file owner" / "File already exists" state isn't there) — gas is set
+# manually and the txs are nonce-offset behind the upload tx, which mines
+# first and makes the caller the owner before each grant executes.
+def prepare_inherited_grant_transactions(cids: list[str], recipients: list[str], user_address: str, nonce_offset: int = 1):
+    user_address = Web3.to_checksum_address(user_address)
+    base_nonce = w3.eth.get_transaction_count(user_address)
+    grant_mask = READ | DOWNLOAD
+    txns = []
+    for i, to in enumerate(recipients):
+        fn = contract.functions.grantFiles(cids, Web3.to_checksum_address(to), grant_mask)
+        txns.append(fn.build_transaction({
+            'chainId': sepolia_chain_id,
+            'gasPrice': _gas_price(),
+            'nonce': base_nonce + nonce_offset + i,
+            'from': user_address,
+            'gas': 150000 * len(cids) + 100000,
+        }))
+    return txns
+
 # Batch unshare: one revokeFiles(cids, to, mask) tx for folder unshare.
 def prepare_unshare_batch_transaction(cids: list[str], to_address: str, user_address: str):
     try:
