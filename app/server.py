@@ -303,11 +303,16 @@ async def get_files(user_address: str = None):
             folder_path = "/" + "/".join(levels[:-1])
 
         # get owner and permissions -> this is primarily for later updates to conditionally show buttons (download, share, etc.)
-        try:
-            owner = contract.functions.getFileOwner(cid).call()
-        except Exception:
-            owner = None
-        
+        # Retry once: a single flaky RPC call would otherwise mark the file
+        # as not-owned and the UI would misfile it under "Shared with me".
+        owner = None
+        for attempt in range(2):
+            try:
+                owner = contract.functions.getFileOwner(cid).call()
+                break
+            except Exception as e:
+                print(f"getFileOwner failed for {cid} (attempt {attempt + 1}): {e}")
+
         is_owner = (owner is not None and owner.lower() == user_address.lower())
 
         try:
