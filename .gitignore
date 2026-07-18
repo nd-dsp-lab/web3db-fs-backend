@@ -49,3 +49,4 @@ app/ipfs/data/**
 app/ipfs/data/ipfs/keystore/
 app/funded_addresses.json
 app/thumbs/
+app/auth_secret.txt

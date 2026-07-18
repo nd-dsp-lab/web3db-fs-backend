@@ -45,3 +45,8 @@ class DeleteFolder(BaseModel):
 class DeleteBatchRequest(BaseModel):
     cids: List[str]
     user_address: str
+
+class AuthTokenRequest(BaseModel):
+    address: str
+    timestamp: int
+    signature: str
