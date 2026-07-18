@@ -389,6 +389,45 @@ describe("FileStorage", function () {
     });
   });
 
+  describe("moveFiles (batch)", function () {
+    beforeEach(async function () {
+      await fileStorage.uploadFile("QmMove1", "/proj/a.txt", "txt");
+      await fileStorage.uploadFile("QmMove2", "/proj/b.txt", "txt");
+    });
+
+    it("Should move several files in one transaction", async function () {
+      await fileStorage.moveFiles(["QmMove1", "QmMove2"], ["/renamed/a.txt", "/renamed/b.txt"]);
+      const files = await fileStorage.getUserFiles(owner.address);
+      expect(files.map((f) => f.filename)).to.have.members(["/renamed/a.txt", "/renamed/b.txt"]);
+    });
+
+    it("Should emit FileMoved per file", async function () {
+      await expect(fileStorage.moveFiles(["QmMove1"], ["/x/a.txt"]))
+        .to.emit(fileStorage, "FileMoved")
+        .withArgs(owner.address, "QmMove1", "/x/a.txt");
+    });
+
+    it("Should reject mismatched array lengths", async function () {
+      await expect(fileStorage.moveFiles(["QmMove1", "QmMove2"], ["/only-one.txt"]))
+        .to.be.revertedWith("Length mismatch");
+    });
+
+    it("Should revert entirely if caller doesn't own every file", async function () {
+      await fileStorage.connect(user1).uploadFile("QmTheirs", "/theirs.txt", "txt");
+      await expect(fileStorage.moveFiles(["QmMove1", "QmTheirs"], ["/a.txt", "/steal.txt"]))
+        .to.be.revertedWith("Not file owner");
+      // first file's move must have been rolled back too
+      const files = await fileStorage.getUserFiles(owner.address);
+      expect(files.map((f) => f.filename)).to.include("/proj/a.txt");
+    });
+
+    it("Should keep single moveFile working", async function () {
+      await fileStorage.moveFile("QmMove1", "/single/a.txt");
+      const files = await fileStorage.getUserFiles(owner.address);
+      expect(files.map((f) => f.filename)).to.include("/single/a.txt");
+    });
+  });
+
   describe("Integration Tests", function () {
     it("Should handle complete file sharing workflow", async function () {
       // Owner uploads file

@@ -11,7 +11,7 @@ import uvicorn
 from dotenv import load_dotenv
 from typing import Optional, List
 from permissions import READ, WRITE, DOWNLOAD, DELETE, SHARE, MOVE, CHANGE_OWNER, CHANGE_ROLE
-from models import TransactionRequest, ShareRequest, UnshareRequest, DeleteRequest, MoveRequest, DeleteFolder, FundWalletRequest, ResolveRecipientRequest, NotifyShareRequest, DeleteBatchRequest, AuthTokenRequest
+from models import TransactionRequest, ShareRequest, UnshareRequest, DeleteRequest, MoveRequest, DeleteFolder, FundWalletRequest, ResolveRecipientRequest, NotifyShareRequest, DeleteBatchRequest, AuthTokenRequest, MoveBatchRequest
 from configure import configure_app, IPFS_API_URL, IPFS_GATEWAY_URL, w3, contract
 from helpers import (
     prepare_upload_transaction,
@@ -19,6 +19,7 @@ from helpers import (
     prepare_unshare_transaction,
     prepare_delete_transaction,
     prepare_move_transaction,
+    prepare_move_batch_transaction,
     prepare_delete_folder,
     unpin_cid,
 )
@@ -734,6 +735,18 @@ async def move_file(request: MoveRequest):
     
     except Exception as e:
         print(f"Failed to prep move transaction: {e}")
+
+# batch move: one moveFiles tx for folder rename / bulk trash / bulk restore
+@app.post("/move-batch")
+async def move_batch(request: MoveBatchRequest = Body(...)):
+    try:
+        if len(request.cids) != len(request.new_paths):
+            return JSONResponse(status_code=400, content={"error": "cids/new_paths length mismatch"})
+        txn, count = prepare_move_batch_transaction(request.cids, request.new_paths, request.user_address)
+        return {"transaction": txn, "count": count}
+    except Exception as e:
+        print(f"Failed to prep batch move transaction: {e}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 # batch delete of explicit CIDs (multi-select delete-forever); reuses the
 # same cleanFolder contract call as folder deletion — one signed tx

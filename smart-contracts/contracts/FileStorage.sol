@@ -271,7 +271,9 @@ contract FileStorage {
         emit FileDeleted(owner, cid);
     }
 
-    function moveFile(string memory cid, string memory newPath) public onlyFileOwner(cid) {
+    function _moveFile(string memory cid, string memory newPath) internal {
+        require(msg.sender == fileOwner[cid], "Not file owner");
+
         // Update the metadata mapping
         fileMetadata[cid].filename = newPath;
 
@@ -286,6 +288,19 @@ contract FileStorage {
         }
 
         emit FileMoved(owner, cid, newPath);
+    }
+
+    function moveFile(string memory cid, string memory newPath) public {
+        _moveFile(cid, newPath);
+    }
+
+    // Batch move: rename/move many files in one transaction (folder rename,
+    // bulk trash/restore). Caller must own every cid.
+    function moveFiles(string[] memory cids, string[] memory newPaths) public {
+        require(cids.length == newPaths.length, "Length mismatch");
+        for (uint256 i = 0; i < cids.length; i++) {
+            _moveFile(cids[i], newPaths[i]);
+        }
     }
 
     //Delete folders and file metadata from owners list

@@ -46,6 +46,11 @@ class DeleteBatchRequest(BaseModel):
     cids: List[str]
     user_address: str
 
+class MoveBatchRequest(BaseModel):
+    cids: List[str]
+    new_paths: List[str]
+    user_address: str
+
 class AuthTokenRequest(BaseModel):
     address: str
     timestamp: int

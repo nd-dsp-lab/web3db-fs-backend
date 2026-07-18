@@ -135,6 +135,32 @@ def prepare_move_transaction(cid: str, new_path: str, user_address: str):
     except Exception as e:
         print("Move transaction prep failed:", e)
 
+# Batch move: one moveFiles(cids, newPaths) tx for folder rename / bulk trash
+def prepare_move_batch_transaction(cids: list[str], new_paths: list[str], user_address: str):
+    try:
+        user_address = Web3.to_checksum_address(user_address)
+
+        # Only the owner can move; filter both lists together
+        owned = [(c, p) for c, p in zip(cids, new_paths)
+                 if contract.functions.getFileOwner(c).call().lower() == user_address.lower()]
+        if not owned:
+            return None, 0
+        owned_cids = [c for c, _ in owned]
+        owned_paths = [p for _, p in owned]
+
+        base_txn = {
+            'chainId': sepolia_chain_id,
+            'gasPrice': _gas_price(),
+            'nonce': w3.eth.get_transaction_count(user_address),
+            'from': user_address,
+        }
+        fn = contract.functions.moveFiles(owned_cids, owned_paths)
+        base_txn['gas'] = int(fn.estimate_gas(base_txn) * 1.1)
+        return fn.build_transaction(base_txn), len(owned)
+    except Exception as e:
+        print("Batch move prep failed:", e)
+        raise
+
 # preparing a delete folder transaction for owner to sign
 def prepare_delete_folder(cids: list[str], user_address: str):
     if not cids:
