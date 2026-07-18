@@ -11,13 +11,15 @@ import uvicorn
 from dotenv import load_dotenv
 from typing import Optional, List
 from permissions import READ, WRITE, DOWNLOAD, DELETE, SHARE, MOVE, CHANGE_OWNER, CHANGE_ROLE
-from models import TransactionRequest, ShareRequest, UnshareRequest, DeleteRequest, MoveRequest, DeleteFolder, FundWalletRequest, ResolveRecipientRequest, NotifyShareRequest, DeleteBatchRequest, AuthTokenRequest, MoveBatchRequest
+from models import TransactionRequest, ShareRequest, UnshareRequest, DeleteRequest, MoveRequest, DeleteFolder, FundWalletRequest, ResolveRecipientRequest, NotifyShareRequest, DeleteBatchRequest, AuthTokenRequest, MoveBatchRequest, ShareBatchRequest
 from configure import configure_app, IPFS_API_URL, IPFS_GATEWAY_URL, w3, contract
 from helpers import (
     prepare_upload_transaction,
     prepare_upload_batch_transaction,
     prepare_share_transaction,
     prepare_unshare_transaction,
+    prepare_share_batch_transaction,
+    prepare_unshare_batch_transaction,
     prepare_delete_transaction,
     prepare_move_transaction,
     prepare_move_batch_transaction,
@@ -433,9 +435,9 @@ async def download_file_with_name(cid: str, filename: str, x_auth_token: Optiona
         print(f"Download failed: {e}")
         return {"error": f"Failed to download file: {str(e)}"}
 
-# Download a whole folder as a zip. Token-authenticated; includes only files
-# the token's address owns under that path (shared files keep the owner's
-# paths, so they don't belong to this user's folder tree).
+# Download a whole folder as a zip. Token-authenticated; includes files under
+# that path the token's address owns or has the DOWNLOAD permission on (so
+# folders shared to the user are downloadable from the Shared view too).
 @app.get("/download-folder")
 async def download_folder_zip(path: str, x_auth_token: Optional[str] = Header(None)):
     import zipfile
@@ -455,8 +457,8 @@ async def download_folder_zip(path: str, x_auth_token: Optional[str] = Header(No
         norm = "/" + "/".join(p for p in full_path.split("/") if p)
         if not norm.startswith(prefix + "/"):
             continue
-        if contract.functions.getFileOwner(cid).call().lower() != address.lower():
-            continue  # shared-with-me entry, not part of this user's tree
+        if not can_download(cid, address):
+            continue
         entries.append((cid, norm[len(prefix) + 1:]))
 
     if not entries:
@@ -750,6 +752,30 @@ async def share_file(request: ShareRequest):
         print(f"Failed to prepare share transaction: {e}")
         return {"error": str(e)}
 
+# Batch share (folder share): one grantFiles tx covering many cids
+@app.post("/share-batch")
+async def share_batch(request: ShareBatchRequest):
+    try:
+        txn, count = prepare_share_batch_transaction(request.cids, request.to_address, request.user_address)
+        if txn is None:
+            return {"error": "No owned files to share"}
+        return {"transaction": txn, "count": count}
+    except Exception as e:
+        print(f"Failed to prepare batch share transaction: {e}")
+        return {"error": str(e)}
+
+# Batch unshare (folder unshare): one revokeFiles tx covering many cids
+@app.post("/unshare-batch")
+async def unshare_batch(request: ShareBatchRequest):
+    try:
+        txn, count = prepare_unshare_batch_transaction(request.cids, request.to_address, request.user_address)
+        if txn is None:
+            return {"error": "No owned files to unshare"}
+        return {"transaction": txn, "count": count}
+    except Exception as e:
+        print(f"Failed to prep batch unshare transaction: {e}")
+        return {"error": str(e)}
+
 # endpoint for unsharing a file (frontend has to sign)
 @app.post("/unshare")
 async def unshare_file(request: UnshareRequest):
@@ -871,6 +897,24 @@ def get_shared_users(cid: str, user_address: str):
             return {"shared_by": owner}
     except Exception as e:
         print(f"Error fetching shared users for CID {cid}: {e}")
+        return {"shared_with": [], "error": str(e)}
+
+# Folder share modal: union of shared users across every owned cid in the
+# folder (POST because a folder can hold more cids than a query string fits)
+@app.post("/shared-users-batch")
+def get_shared_users_batch(request: DeleteBatchRequest):
+    try:
+        requester = Web3.to_checksum_address(request.user_address)
+        users = set()
+        for cid in request.cids:
+            owner = contract.functions.getFileOwner(cid).call()
+            if owner.lower() != requester.lower():
+                continue
+            for u in contract.functions.getSharedUsers(cid).call():
+                users.add(u)
+        return {"shared_with": sorted(users)}
+    except Exception as e:
+        print(f"Error fetching shared users batch: {e}")
         return {"shared_with": [], "error": str(e)}
 
 if __name__ == "__main__":

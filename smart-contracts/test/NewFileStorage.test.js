@@ -454,6 +454,45 @@ describe("FileStorage", function () {
     });
   });
 
+  describe("grantFiles / revokeFiles (batch)", function () {
+    beforeEach(async function () {
+      await fileStorage.uploadFile("QmShare1", "/proj/a.txt", "txt");
+      await fileStorage.uploadFile("QmShare2", "/proj/b.txt", "txt");
+    });
+
+    it("Should grant permissions on several files in one transaction", async function () {
+      await fileStorage.grantFiles(["QmShare1", "QmShare2"], user1.address, READ | DOWNLOAD);
+      expect(await fileStorage.getPermissions("QmShare1", user1.address)).to.equal(READ | DOWNLOAD);
+      expect(await fileStorage.getPermissions("QmShare2", user1.address)).to.equal(READ | DOWNLOAD);
+      const files = await fileStorage.getUserFiles(user1.address);
+      expect(files.map((f) => f.filename)).to.have.members(["/proj/a.txt", "/proj/b.txt"]);
+    });
+
+    it("Should revoke permissions on several files in one transaction", async function () {
+      await fileStorage.grantFiles(["QmShare1", "QmShare2"], user1.address, READ | DOWNLOAD);
+      await fileStorage.revokeFiles(["QmShare1", "QmShare2"], user1.address, READ | DOWNLOAD);
+      expect(await fileStorage.getPermissions("QmShare1", user1.address)).to.equal(0);
+      expect(await fileStorage.getPermissions("QmShare2", user1.address)).to.equal(0);
+      expect((await fileStorage.getUserFiles(user1.address)).length).to.equal(0);
+      expect((await fileStorage.getSharedUsers("QmShare1")).length).to.equal(0);
+    });
+
+    it("Should revert entirely if caller doesn't own every file", async function () {
+      await fileStorage.connect(user1).uploadFile("QmTheirShare", "/theirs.txt", "txt");
+      await expect(
+        fileStorage.grantFiles(["QmShare1", "QmTheirShare"], user2.address, READ)
+      ).to.be.revertedWith("Not file owner");
+      expect(await fileStorage.getPermissions("QmShare1", user2.address)).to.equal(0);
+    });
+
+    it("Should keep single grant and revoke working", async function () {
+      await fileStorage.grant("QmShare1", user1.address, READ);
+      expect(await fileStorage.getPermissions("QmShare1", user1.address)).to.equal(READ);
+      await fileStorage.revoke("QmShare1", user1.address, READ);
+      expect(await fileStorage.getPermissions("QmShare1", user1.address)).to.equal(0);
+    });
+  });
+
   describe("Integration Tests", function () {
     it("Should handle complete file sharing workflow", async function () {
       // Owner uploads file

@@ -56,8 +56,8 @@ contract FileStorage {
         emit PermissionGranted(cid, user, newPermissions);
     }
 
-    function grant(string memory cid, address user, uint256 grantMask)
-        external
+    function _grant(string memory cid, address user, uint256 grantMask)
+        internal
         onlyFileOwner(cid)
     {
         // add to sharedFiles if first time getting permissions
@@ -70,8 +70,20 @@ contract FileStorage {
         emit PermissionGranted(cid, user, grantMask);
     }
 
-    function revoke(string memory cid, address user, uint256 revokeMask)
-        external
+    function grant(string memory cid, address user, uint256 grantMask) external {
+        _grant(cid, user, grantMask);
+    }
+
+    // Batch grant: share many files with one user in one transaction (folder share).
+    // Caller must own every cid.
+    function grantFiles(string[] memory cids, address user, uint256 grantMask) external {
+        for (uint256 i = 0; i < cids.length; i++) {
+            _grant(cids[i], user, grantMask);
+        }
+    }
+
+    function _revoke(string memory cid, address user, uint256 revokeMask)
+        internal
         onlyFileOwner(cid)
     {
         _permissions[cid][user] = _permissions[cid][user] & ~revokeMask;
@@ -103,6 +115,18 @@ contract FileStorage {
         }
         
         emit PermissionRevoked(cid, user, revokeMask);
+    }
+
+    function revoke(string memory cid, address user, uint256 revokeMask) external {
+        _revoke(cid, user, revokeMask);
+    }
+
+    // Batch revoke: unshare many files from one user in one transaction (folder unshare).
+    // Caller must own every cid.
+    function revokeFiles(string[] memory cids, address user, uint256 revokeMask) external {
+        for (uint256 i = 0; i < cids.length; i++) {
+            _revoke(cids[i], user, revokeMask);
+        }
     }
 
     // Permission Query Functions -> from Yanchen

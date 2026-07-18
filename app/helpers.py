@@ -67,6 +67,59 @@ def prepare_share_transaction(cid: str, to_address: str, user_address: str):
         print("Share transaction preparation failed:", e)
         raise
 
+# Batch share: one grantFiles(cids, to, mask) tx for folder share.
+# Filters to cids the caller owns; returns (txn, count) or (None, 0).
+def prepare_share_batch_transaction(cids: list[str], to_address: str, user_address: str):
+    try:
+        user_address = Web3.to_checksum_address(user_address)
+        to_address = Web3.to_checksum_address(to_address)
+
+        owned = [c for c in cids
+                 if contract.functions.getFileOwner(c).call().lower() == user_address.lower()]
+        if not owned:
+            return None, 0
+
+        grant_mask = READ | DOWNLOAD
+
+        base_txn = {
+            'chainId': sepolia_chain_id,
+            'gasPrice': _gas_price(),
+            'nonce': w3.eth.get_transaction_count(user_address),
+            'from': user_address,
+        }
+        fn = contract.functions.grantFiles(owned, to_address, grant_mask)
+        base_txn['gas'] = int(fn.estimate_gas(base_txn) * 1.1)
+        return fn.build_transaction(base_txn), len(owned)
+    except Exception as e:
+        print("Batch share prep failed:", e)
+        raise
+
+# Batch unshare: one revokeFiles(cids, to, mask) tx for folder unshare.
+def prepare_unshare_batch_transaction(cids: list[str], to_address: str, user_address: str):
+    try:
+        user_address = Web3.to_checksum_address(user_address)
+        to_address = Web3.to_checksum_address(to_address)
+
+        owned = [c for c in cids
+                 if contract.functions.getFileOwner(c).call().lower() == user_address.lower()]
+        if not owned:
+            return None, 0
+
+        revoke_mask = READ | DOWNLOAD
+
+        base_txn = {
+            'chainId': sepolia_chain_id,
+            'gasPrice': _gas_price(),
+            'nonce': w3.eth.get_transaction_count(user_address),
+            'from': user_address,
+        }
+        fn = contract.functions.revokeFiles(owned, to_address, revoke_mask)
+        base_txn['gas'] = int(fn.estimate_gas(base_txn) * 1.1)
+        return fn.build_transaction(base_txn), len(owned)
+    except Exception as e:
+        print("Batch unshare prep failed:", e)
+        raise
+
 # preparing an unshare transaction for owner to sign
 def prepare_unshare_transaction(cid: str, to_address: str, user_address: str):
     try:

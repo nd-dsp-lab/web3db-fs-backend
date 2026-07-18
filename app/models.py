@@ -51,6 +51,11 @@ class MoveBatchRequest(BaseModel):
     new_paths: List[str]
     user_address: str
 
+class ShareBatchRequest(BaseModel):
+    cids: List[str]
+    to_address: str
+    user_address: str
+
 class AuthTokenRequest(BaseModel):
     address: str
     timestamp: int
