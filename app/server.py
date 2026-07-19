@@ -446,6 +446,30 @@ async def verify_upload(request: TransactionRequest):
         print(f"Transaction verification failed: {e}")
         return {"success": False, "error": str(e)}
 
+# Storage capacity for the sidebar usage bar: free disk on the volume backing
+# the IPFS repo (via repo/stat when reachable, else this host's disk — the
+# Docker volume lives on it anyway).
+@app.get("/storage-stats")
+def storage_stats():
+    import shutil
+    stats = {}
+    try:
+        r = requests.post(f"{IPFS_API_URL}/repo/stat", timeout=5)
+        if r.ok:
+            j = r.json()
+            stats["ipfs_repo_size"] = j.get("RepoSize")
+            stats["ipfs_storage_max"] = j.get("StorageMax")
+    except Exception as e:
+        print(f"repo/stat failed: {e}")
+    try:
+        du = shutil.disk_usage("/")
+        stats["disk_total"] = du.total
+        stats["disk_free"] = du.free
+    except Exception as e:
+        print(f"disk_usage failed: {e}")
+    return stats
+
+
 @app.post("/auth/token")
 async def issue_auth_token(request: AuthTokenRequest):
     if abs(time.time() - request.timestamp) > AUTH_MESSAGE_MAX_AGE:
