@@ -28,79 +28,13 @@ from helpers import (
     folder_share_set,
     prepare_inherited_grant_transactions,
 )
+from security import verify_auth_token, can_download, require_download_access
+from routers.auth import router as auth_router
 
-# This will be a simple fastAPI server that acts as an sgx node 
+# This will be a simple fastAPI server that acts as an sgx node
 app = FastAPI()
 configure_app(app)  # CORS + other startup steps
-
-# --- Download auth: wallet-signature login -> short-lived HMAC token ---
-# The frontend proves wallet ownership once (personal_sign) and gets a token;
-# /download and /thumbnail then check on-chain permissions for the token's
-# address instead of trusting a spoofable user_address query param.
-import time, hmac as hmac_mod, hashlib, secrets as secrets_mod
-from eth_account import Account
-from eth_account.messages import encode_defunct
-
-AUTH_SECRET_FILE = os.path.join(os.path.dirname(__file__), "auth_secret.txt")
-AUTH_TOKEN_TTL = 24 * 3600
-AUTH_MESSAGE_MAX_AGE = 600  # seconds of clock skew allowed on the signed login message
-
-def _load_auth_secret() -> bytes:
-    # Prefer AUTH_SECRET from the environment (.env in dev, real env in prod);
-    # fall back to an auto-generated local file so dev works out of the box.
-    env_secret = os.getenv("AUTH_SECRET")
-    if env_secret:
-        return bytes.fromhex(env_secret.strip())
-    try:
-        with open(AUTH_SECRET_FILE) as f:
-            return bytes.fromhex(f.read().strip())
-    except FileNotFoundError:
-        secret = secrets_mod.token_bytes(32)
-        with open(AUTH_SECRET_FILE, "w") as f:
-            f.write(secret.hex())
-        return secret
-
-AUTH_SECRET = _load_auth_secret()
-
-def _token_signature(payload: str) -> str:
-    return hmac_mod.new(AUTH_SECRET, payload.encode(), hashlib.sha256).hexdigest()
-
-def auth_message(address: str, timestamp: int) -> str:
-    return f"Web3FS sign-in\nAddress: {address.lower()}\nTimestamp: {timestamp}"
-
-def verify_auth_token(token: str):
-    """Returns the lowercase wallet address for a valid token, else None."""
-    try:
-        address, expiry, sig = token.split(".")
-        payload = f"{address}.{expiry}"
-        if not hmac_mod.compare_digest(sig, _token_signature(payload)):
-            return None
-        if int(expiry) < time.time():
-            return None
-        return address
-    except (ValueError, AttributeError):
-        return None
-
-def can_download(cid: str, address: str) -> bool:
-    """On-chain check: file owner, or DOWNLOAD permission bit granted."""
-    try:
-        checksum = Web3.to_checksum_address(address)
-        owner = contract.functions.getFileOwner(cid).call()
-        if owner.lower() == address.lower():
-            return True
-        return bool(contract.functions.getPermissions(cid, checksum).call() & DOWNLOAD)
-    except Exception as e:
-        print(f"Permission check failed for {cid}/{address}: {e}")
-        return False
-
-def require_download_access(cid: str, token: str):
-    """Returns an error JSONResponse, or None if access is allowed."""
-    address = verify_auth_token(token or "")
-    if not address:
-        return JSONResponse(status_code=401, content={"error": "Missing or invalid auth token"})
-    if not can_download(cid, address):
-        return JSONResponse(status_code=403, content={"error": "No download permission for this file"})
-    return None
+app.include_router(auth_router)
 
 # CID -> size cache; content is immutable per CID so entries never go stale
 _file_size_cache = {}
@@ -468,25 +402,6 @@ def storage_stats():
     except Exception as e:
         print(f"disk_usage failed: {e}")
     return stats
-
-
-@app.post("/auth/token")
-async def issue_auth_token(request: AuthTokenRequest):
-    if abs(time.time() - request.timestamp) > AUTH_MESSAGE_MAX_AGE:
-        return JSONResponse(status_code=400, content={"error": "Login message expired, retry"})
-    try:
-        message = auth_message(request.address, request.timestamp)
-        recovered = Account.recover_message(encode_defunct(text=message), signature=request.signature)
-    except Exception as e:
-        print(f"Auth signature recovery failed: {e}")
-        return JSONResponse(status_code=401, content={"error": "Invalid signature"})
-    if recovered.lower() != request.address.lower():
-        return JSONResponse(status_code=401, content={"error": "Signature does not match address"})
-
-    address = request.address.lower()
-    expiry = int(time.time()) + AUTH_TOKEN_TTL
-    payload = f"{address}.{expiry}"
-    return {"token": f"{payload}.{_token_signature(payload)}", "expires": expiry}
 
 
 # endpoint for downloading a file from ipfs -> updated
