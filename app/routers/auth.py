@@ -1,5 +1,6 @@
 """Auth token issuance: verify a signed login message, return an HMAC token."""
 import time
+import logging
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
@@ -14,6 +15,8 @@ from security import (
     AUTH_MESSAGE_MAX_AGE,
 )
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
 
 
@@ -25,7 +28,7 @@ async def issue_auth_token(request: AuthTokenRequest):
         message = auth_message(request.address, request.timestamp)
         recovered = Account.recover_message(encode_defunct(text=message), signature=request.signature)
     except Exception as e:
-        print(f"Auth signature recovery failed: {e}")
+        logger.warning("Auth signature recovery failed: %s", e)
         return JSONResponse(status_code=401, content={"error": "Invalid signature"})
     if recovered.lower() != request.address.lower():
         return JSONResponse(status_code=401, content={"error": "Signature does not match address"})

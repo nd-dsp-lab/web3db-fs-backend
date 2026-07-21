@@ -1,8 +1,16 @@
 import os
 import json
+import logging
 from dotenv import load_dotenv
 from fastapi.middleware.cors import CORSMiddleware
 from web3 import Web3
+
+from logging_config import setup_logging
+
+# configure is the first backend module imported, so set up logging here
+# before anything else emits a record.
+setup_logging()
+logger = logging.getLogger(__name__)
 
 # Load environment variables from .env file in web3db-fs-backend folder
 env_path = os.path.join(os.path.dirname(__file__), '..', '.env')
@@ -25,7 +33,7 @@ def configure_app(app):
         allow_headers=["*"],
     )
 
-    print(f"server started listening on port 8090")
+    logger.info("server started listening on port 8090")
 
 # Constant
 IPFS_API_URL = "http://localhost:5001/api/v0"
@@ -36,10 +44,10 @@ infura_url = os.getenv("INFURA_URL") or f"https://sepolia.infura.io/v3/{os.geten
 w3 = Web3(Web3.HTTPProvider(infura_url))
 try:
     if w3.is_connected():
-        print("Web3 is connected:", True)
+        logger.info("Web3 is connected")
 except Exception as e:
-    print(f"Warning: Could not verify Web3 connection at startup: {e}")
-    print("Web3 will be tested when making transactions")
+    logger.warning("Could not verify Web3 connection at startup: %s", e)
+    logger.warning("Web3 will be tested when making transactions")
 
 # load contract from Will's deployed contract
 contract_path = os.path.join(os.path.dirname(__file__), 'FileStorage.json')
@@ -54,4 +62,4 @@ if not contract_address:
 contract = w3.eth.contract(address=contract_address, abi=abi)
 if not contract:
     raise Exception("Contract not found")
-print("Contract loaded:", contract.address)
+logger.info("Contract loaded: %s", contract.address)

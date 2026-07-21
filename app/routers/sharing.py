@@ -1,6 +1,7 @@
 """Sharing: grant/revoke (single + batch), shared-user queries, recipient
 resolution (share by email via Privy), and share-notification emails (SES)."""
 import os
+import logging
 from typing import Optional
 
 import httpx
@@ -23,6 +24,8 @@ from helpers import (
     prepare_share_batch_transaction,
     prepare_unshare_batch_transaction,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -84,11 +87,11 @@ async def notify_share(request: NotifyShareRequest):
             smtp.starttls()
             smtp.login(smtp_user, smtp_password)
             smtp.sendmail(NOTIFY_FROM, [to_email], msg.as_string())
-        print(f"[notify-share] sent to {to_email} for file {request.filename}")
+        logger.info("[notify-share] sent to %s for file %s", to_email, request.filename)
         return {"sent": True}
     except smtplib.SMTPException as e:
         # Notification is best-effort: the share itself already succeeded
-        print(f"[notify-share] send failed: {e}")
+        logger.error("[notify-share] send failed: %s", e)
         return JSONResponse(status_code=502, content={"error": f"Email send failed: {e}"})
 
 
@@ -145,12 +148,12 @@ async def resolve_recipient(request: ResolveRecipientRequest):
             auth=auth, headers=headers,
         )
         if created.status_code not in (200, 201):
-            print(f"[resolve-recipient] Privy user creation failed: {created.status_code} {created.text}")
+            logger.error("[resolve-recipient] Privy user creation failed: %s %s", created.status_code, created.text)
             return JSONResponse(status_code=502, content={"error": "Could not create wallet for that email"})
         address = _extract_eth_address(created.json())
         if not address:
             return JSONResponse(status_code=502, content={"error": "Wallet creation returned no address"})
-        print(f"[resolve-recipient] pregenerated wallet {address} for {email}")
+        logger.info("[resolve-recipient] pregenerated wallet %s for %s", address, email)
         return {"address": address, "existed": False, "pregenerated": True}
 
 
@@ -161,7 +164,7 @@ async def share_file(request: ShareRequest):
         txn = prepare_share_transaction(request.cid, request.to_address, request.user_address)
         return {"transaction": txn}
     except Exception as e:
-        print(f"Failed to prepare share transaction: {e}")
+        logger.error("Failed to prepare share transaction: %s", e)
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
@@ -174,7 +177,7 @@ async def share_batch(request: ShareBatchRequest):
             return JSONResponse(status_code=400, content={"error": "No owned files to share"})
         return {"transaction": txn, "count": count}
     except Exception as e:
-        print(f"Failed to prepare batch share transaction: {e}")
+        logger.error("Failed to prepare batch share transaction: %s", e)
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
@@ -187,7 +190,7 @@ async def unshare_batch(request: ShareBatchRequest):
             return JSONResponse(status_code=400, content={"error": "No owned files to unshare"})
         return {"transaction": txn, "count": count}
     except Exception as e:
-        print(f"Failed to prep batch unshare transaction: {e}")
+        logger.error("Failed to prep batch unshare transaction: %s", e)
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
@@ -198,7 +201,7 @@ async def unshare_file(request: UnshareRequest):
         txn = prepare_unshare_transaction(request.cid, request.to_address, request.user_address)
         return {"transaction": txn}
     except Exception as e:
-        print(f"Failed to prep unshare transaction: {e}")
+        logger.error("Failed to prep unshare transaction: %s", e)
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
@@ -215,7 +218,7 @@ def get_shared_users(cid: str, user_address: str):
         else:
             return {"shared_by": owner}
     except Exception as e:
-        print(f"Error fetching shared users for CID {cid}: {e}")
+        logger.error("Error fetching shared users for CID %s: %s", cid, e)
         return {"shared_with": [], "error": str(e)}
 
 
@@ -234,5 +237,5 @@ def get_shared_users_batch(request: DeleteBatchRequest):
                 users.add(u)
         return {"shared_with": sorted(users)}
     except Exception as e:
-        print(f"Error fetching shared users batch: {e}")
+        logger.error("Error fetching shared users batch: %s", e)
         return {"shared_with": [], "error": str(e)}

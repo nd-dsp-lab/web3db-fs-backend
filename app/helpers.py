@@ -1,8 +1,11 @@
+import logging
 from typing import Optional
 import requests
 from web3 import Web3
 from configure import w3, contract, IPFS_API_URL
 from permissions import READ, DOWNLOAD
+
+logger = logging.getLogger(__name__)
 
 sepolia_chain_id = 11155111
 
@@ -49,13 +52,13 @@ def _owned_only(cids: list[str], user_address: str) -> list[str]:
 
 # return transaction data for frontend to sign
 def prepare_upload_transaction(cid: str, full_path: str, user_address: str, file_format: Optional[str] = None, nonce_offset: int = 0):
-    print(f"[prepare_upload_transaction] CID={cid}, full_path={full_path}")
+    logger.debug("prepare_upload_transaction CID=%s full_path=%s", cid, full_path)
     try:
         txn = contract.functions.uploadFile(cid, full_path, file_format or "").build_transaction(
             _base_tx(user_address, nonce_offset))
         return txn
     except Exception as e:
-        print("Transaction preparation failed:", e)
+        logger.error("Transaction preparation failed: %s", e)
         raise
 
 
@@ -66,12 +69,12 @@ def prepare_share_transaction(cid: str, to_address: str, user_address: str):
         to_address = Web3.to_checksum_address(to_address)
         _assert_owner(cid, user_address, "share")
 
-        print(f"Sharing CID {cid} with {to_address} using mask {SHARE_MASK}")
+        logger.info("Sharing CID %s with %s using mask %s", cid, to_address, SHARE_MASK)
         txn = contract.functions.grant(cid, to_address, SHARE_MASK).build_transaction(
             _base_tx(user_address))
         return txn
     except Exception as e:
-        print("Share transaction preparation failed:", e)
+        logger.error("Share transaction preparation failed: %s", e)
         raise
 
 
@@ -91,7 +94,7 @@ def prepare_share_batch_transaction(cids: list[str], to_address: str, user_addre
         base_txn['gas'] = int(fn.estimate_gas(base_txn) * 1.1)
         return fn.build_transaction(base_txn), len(owned)
     except Exception as e:
-        print("Batch share prep failed:", e)
+        logger.error("Batch share prep failed: %s", e)
         raise
 
 
@@ -122,14 +125,14 @@ def folder_share_set(user_address: str, folder_path: str) -> list[str]:
                 if contract.functions.getFileOwner(cid).call().lower() == owner.lower():
                     owned_cids.append(cid)
             except Exception as e:
-                print(f"folder_share_set: getFileOwner failed for {cid}: {e}")
+                logger.warning("folder_share_set: getFileOwner failed for %s: %s", cid, e)
         if owned_cids:
             shared = None
             for cid in owned_cids:
                 try:
                     users = set(contract.functions.getSharedUsers(cid).call())
                 except Exception as e:
-                    print(f"folder_share_set: getSharedUsers failed for {cid}: {e}")
+                    logger.warning("folder_share_set: getSharedUsers failed for %s: %s", cid, e)
                     users = set()
                 shared = users if shared is None else (shared & users)
                 if not shared:
@@ -175,7 +178,7 @@ def prepare_unshare_batch_transaction(cids: list[str], to_address: str, user_add
         base_txn['gas'] = int(fn.estimate_gas(base_txn) * 1.1)
         return fn.build_transaction(base_txn), len(owned)
     except Exception as e:
-        print("Batch unshare prep failed:", e)
+        logger.error("Batch unshare prep failed: %s", e)
         raise
 
 
@@ -187,12 +190,12 @@ def prepare_unshare_transaction(cid: str, to_address: str, user_address: str):
         _assert_owner(cid, user_address, "unshare")
 
         # Unshare permissions (~READ + ~DOWNLOAD) -> bits are flipped in smart contract
-        print(f"Unsharing CID {cid} with {to_address} using mask {SHARE_MASK}")
+        logger.info("Unsharing CID %s with %s using mask %s", cid, to_address, SHARE_MASK)
         txn = contract.functions.revoke(cid, to_address, SHARE_MASK).build_transaction(
             _base_tx(user_address))
         return txn
     except Exception as e:
-        print("Unshare transaction preparation failed:", e)
+        logger.error("Unshare transaction preparation failed: %s", e)
         raise
 
 
@@ -203,7 +206,7 @@ def prepare_delete_transaction(cid: str, user_address: str):
             _base_tx(user_address))
         return txn
     except Exception as e:
-        print("Delete transaction prep failed:", e)
+        logger.error("Delete transaction prep failed: %s", e)
         raise
 
 
@@ -216,7 +219,7 @@ def prepare_move_transaction(cid: str, new_path: str, user_address: str):
             _base_tx(user_address))
         return txn
     except Exception as e:
-        print("Move transaction prep failed:", e)
+        logger.error("Move transaction prep failed: %s", e)
         raise
 
 
@@ -228,7 +231,7 @@ def prepare_upload_batch_transaction(cids: list[str], paths: list[str], formats:
         base_txn['gas'] = int(fn.estimate_gas(base_txn) * 1.1)
         return fn.build_transaction(base_txn)
     except Exception as e:
-        print("Batch upload prep failed:", e)
+        logger.error("Batch upload prep failed: %s", e)
         raise
 
 
@@ -251,7 +254,7 @@ def prepare_move_batch_transaction(cids: list[str], new_paths: list[str], user_a
         base_txn['gas'] = int(fn.estimate_gas(base_txn) * 1.1)
         return fn.build_transaction(base_txn), len(owned)
     except Exception as e:
-        print("Batch move prep failed:", e)
+        logger.error("Batch move prep failed: %s", e)
         raise
 
 
@@ -267,7 +270,7 @@ def prepare_delete_folder(cids: list[str], user_address: str):
         txn = contract.functions.cleanFolder(cids).build_transaction(base_txn)
         return txn
     except Exception as e:
-        print("Deleting folder prep failed", e)
+        logger.error("Deleting folder prep failed: %s", e)
         raise
 
 

@@ -1,6 +1,7 @@
 """Uploads: single file and folder (batch) registration on IPFS + contract,
 plus transaction-receipt verification (which unpins on delete/cleanFolder)."""
 import json
+import logging
 from typing import Optional, List
 
 import requests
@@ -16,6 +17,8 @@ from helpers import (
     folder_share_set,
     prepare_inherited_grant_transactions,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -72,7 +75,7 @@ async def upload_file(file: UploadFile, user_address: str = Form(...), folder_pa
     else:
         full_path = f"{folder_path}/{file.filename}"
 
-    print(f"[upload] full_path to send to contract: {full_path}")
+    logger.debug("[upload] full_path to send to contract: %s", full_path)
 
     # Prepare transaction for frontend to sign
     transaction_data = prepare_upload_transaction(cid, full_path, user_address, file_format)
@@ -86,7 +89,7 @@ async def upload_file(file: UploadFile, user_address: str = Form(...), folder_pa
             if auto_shared_with:
                 share_transactions = prepare_inherited_grant_transactions([cid], auto_shared_with, user_address)
         except Exception as e:
-            print(f"[upload] inherited share prep failed: {e}")
+            logger.warning("[upload] inherited share prep failed: %s", e)
             share_transactions, auto_shared_with = [], []
 
     return {
@@ -108,15 +111,14 @@ async def upload_folder(
     paths: List[str] = Form(...),
     user_address: str = Form(...)
 ):
-    print(f"Uploading {len(files)} files from folder for {user_address}...")
+    logger.info("Uploading %d files from folder for %s", len(files), user_address)
 
     uploaded_files = []
     skipped_files = []
 
     for idx, file in enumerate(files):
-        print(idx, file.filename)
         folder_path = paths[idx] if idx < len(paths) else "/"
-        print(f"  Uploading {file.filename} to IPFS (folder: {folder_path})")
+        logger.debug("[%d] Uploading %s to IPFS (folder: %s)", idx, file.filename, folder_path)
 
         # Read file and upload to IPFS
         file_data = await file.read()
@@ -126,9 +128,9 @@ async def upload_folder(
             files={"file": (file.filename, file_data)}
         )
         if ipfs_response.status_code != 200:
-            print(f"Failed to upload {file.filename} to IPFS")
+            logger.warning("Failed to upload %s to IPFS", file.filename)
             continue
-        print(f"  Uploaded {file.filename} to IPFS")
+        logger.debug("Uploaded %s to IPFS", file.filename)
         ipfs_response.raise_for_status()
 
         # Parse only the last JSON object if multiple exist
@@ -138,8 +140,7 @@ async def upload_folder(
             ipfs_json = json.loads(last_line)
             cid = ipfs_json["Hash"]
         except Exception as e:
-            print("Error parsing IPFS response:", e)
-            print("Raw IPFS response:", raw_text)
+            logger.error("Error parsing IPFS response: %s | raw: %s", e, raw_text)
             continue
 
         # Extract just the filename without the folder path
@@ -152,12 +153,12 @@ async def upload_folder(
         except Exception:
             existing_owner = "0x0000000000000000000000000000000000000000"
         if existing_owner != "0x0000000000000000000000000000000000000000":
-            print(f"  Skipping {actual_filename}: CID already owned by {existing_owner}")
+            logger.warning("Skipping %s: CID already owned by %s", actual_filename, existing_owner)
             skipped_files.append({"filename": actual_filename, "cid": cid, "owner": existing_owner})
             continue
         # ...and identical files within the same batch (same CID twice)
         if any(u["cid"] == cid for u in uploaded_files):
-            print(f"  Skipping {actual_filename}: duplicate content within this batch")
+            logger.warning("Skipping %s: duplicate content within this batch", actual_filename)
             skipped_files.append({"filename": actual_filename, "cid": cid, "owner": user_address})
             continue
 
@@ -205,7 +206,7 @@ async def upload_folder(
                     share_transactions = prepare_inherited_grant_transactions(
                         [u["cid"] for u in uploaded_files], auto_shared_with, user_address)
         except Exception as e:
-            print(f"[upload-folder] inherited share prep failed: {e}")
+            logger.warning("[upload-folder] inherited share prep failed: %s", e)
             share_transactions, auto_shared_with = [], []
 
     return {
@@ -222,13 +223,11 @@ async def upload_folder(
 @router.post("/verify-upload")
 async def verify_upload(request: TransactionRequest):
     try:
-        print(f"Waiting for transaction receipt for: {request.tx_hash}")
+        logger.info("Waiting for transaction receipt for: %s", request.tx_hash)
         receipt = w3.eth.wait_for_transaction_receipt(request.tx_hash, timeout=120)
 
-        print(f"Transaction successful!")
-        print(f"Block number: {receipt.blockNumber}")
-        print(f"Gas used: {receipt.gasUsed}")
-        print(f"Status: {receipt.status}")
+        logger.info("Transaction mined: block=%s gas=%s status=%s",
+                    receipt.blockNumber, receipt.gasUsed, receipt.status)
 
         response_payload = {
             "success": True,
@@ -250,7 +249,7 @@ async def verify_upload(request: TransactionRequest):
             if func_name == "deleteFile" and receipt.status == 1:
                 cid_unpin = func_params.get("cid") or func_params.get("_cid") or None
                 if cid_unpin:
-                    print(f"Detected deleteFile for cid {cid_unpin} - unpinning from local IPFS node")
+                    logger.info("Detected deleteFile for cid %s - unpinning from local IPFS node", cid_unpin)
                     unpin_result = unpin_cid(cid_unpin)
                     response_payload["unpin_result"] = unpin_result
                 else:
@@ -258,21 +257,21 @@ async def verify_upload(request: TransactionRequest):
             elif func_name == "cleanFolder" and receipt.status == 1:
                     cids_to_unpin = func_params.get("cids")
                     if cids_to_unpin:
-                        print(f">>> FOUND {len(cids_to_unpin)} CIDs to unpin")
+                        logger.info("Found %d CIDs to unpin", len(cids_to_unpin))
                         results = []
                         for cid in cids_to_unpin:
-                            print(f">>> Unpinning: {cid}")
+                            logger.debug("Unpinning: %s", cid)
                             res = unpin_cid(cid)
                             results.append({"cid": cid, "result": res})
                     else:
-                        print("cleanFolder transaction found, but CIDs list was empty.")
+                        logger.warning("cleanFolder transaction found, but CIDs list was empty")
                         response_payload["unpin_result"] = {"warning": "Empty CID list"}
         except Exception as e:
-            print(f"Couldn't decode tx input for unpin: {e}")
+            logger.warning("Couldn't decode tx input for unpin: %s", e)
             response_payload["decoded_function_error"] = str(e)
 
         return response_payload
 
     except Exception as e:
-        print(f"Transaction verification failed: {e}")
+        logger.error("Transaction verification failed: %s", e)
         return {"success": False, "error": str(e)}

@@ -6,6 +6,7 @@ token's address instead of trusting a spoofable user_address query param.
 """
 import os
 import time
+import logging
 import hmac as hmac_mod
 import hashlib
 import secrets as secrets_mod
@@ -15,6 +16,8 @@ from fastapi.responses import JSONResponse
 
 from configure import contract
 from permissions import DOWNLOAD
+
+logger = logging.getLogger(__name__)
 
 AUTH_SECRET_FILE = os.path.join(os.path.dirname(__file__), "auth_secret.txt")
 AUTH_TOKEN_TTL = 24 * 3600
@@ -71,7 +74,7 @@ def can_download(cid: str, address: str) -> bool:
             return True
         return bool(contract.functions.getPermissions(cid, checksum).call() & DOWNLOAD)
     except Exception as e:
-        print(f"Permission check failed for {cid}/{address}: {e}")
+        logger.warning("Permission check failed for %s/%s: %s", cid, address, e)
         return False
 
 

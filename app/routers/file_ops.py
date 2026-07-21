@@ -1,5 +1,7 @@
 """File operations: delete/move (single + batch) and folder deletion.
 Each prepares an unsigned transaction the frontend signs."""
+import logging
+
 from fastapi import APIRouter, Body
 from fastapi.responses import JSONResponse
 from web3 import Web3
@@ -13,6 +15,8 @@ from helpers import (
     prepare_delete_folder,
 )
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
 
 
@@ -25,7 +29,7 @@ async def delete_file(request: DeleteRequest):
         return result
 
     except Exception as e:
-        print(f"Failed to prep delete transaction: {e}")
+        logger.error("Failed to prep delete transaction: %s", e)
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
@@ -38,7 +42,7 @@ async def move_file(request: MoveRequest):
         return result
 
     except Exception as e:
-        print(f"Failed to prep move transaction: {e}")
+        logger.error("Failed to prep move transaction: %s", e)
 
 
 # batch move: one moveFiles tx for folder rename / bulk trash / bulk restore
@@ -50,7 +54,7 @@ async def move_batch(request: MoveBatchRequest = Body(...)):
         txn, count = prepare_move_batch_transaction(request.cids, request.new_paths, request.user_address)
         return {"transaction": txn, "count": count}
     except Exception as e:
-        print(f"Failed to prep batch move transaction: {e}")
+        logger.error("Failed to prep batch move transaction: %s", e)
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
@@ -73,7 +77,7 @@ async def delete_batch(request: DeleteBatchRequest = Body(...)):
         txn = prepare_delete_folder(owned, user_address) if owned else None
         return {"transaction": txn, "count": len(owned)}
     except Exception as e:
-        print(f"Failed to prep batch delete transaction: {e}")
+        logger.error("Failed to prep batch delete transaction: %s", e)
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
@@ -89,7 +93,7 @@ async def delete_folder(request: DeleteFolder = Body(...)):
 
         is_principal = search_path == "" or "/" not in search_path
 
-        print(f"Searching for files to delete in: {search_path}")
+        logger.debug("Searching for files to delete in: %s", search_path)
 
         for file_data in user_files:
             cid, full_path = file_data[0], file_data[1].strip("/")
@@ -100,10 +104,10 @@ async def delete_folder(request: DeleteFolder = Body(...)):
         txn = None
 
         if final_cids:
-            print(f"Found {len(final_cids)} CIDs to delete: {final_cids}")
+            logger.info("Found %d CIDs to delete: %s", len(final_cids), final_cids)
             txn = prepare_delete_folder(final_cids, user_address)
         else:
-            print("No files found on-chain for this folder path.")
+            logger.info("No files found on-chain for this folder path")
 
         return {
             "transaction": txn,
@@ -113,5 +117,5 @@ async def delete_folder(request: DeleteFolder = Body(...)):
         }
 
     except Exception as e:
-        print(f"Failed to prep deleting folders transaction: {e}")
+        logger.error("Failed to prep deleting folders transaction: %s", e)
         return JSONResponse(status_code=500, content={"error": str(e)})

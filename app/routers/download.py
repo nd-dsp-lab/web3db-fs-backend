@@ -2,6 +2,7 @@
 cached JPEG thumbnails. All token-authenticated via the security helpers."""
 import io
 import os
+import logging
 from typing import Optional
 
 import httpx
@@ -11,6 +12,8 @@ from web3 import Web3
 
 from configure import IPFS_GATEWAY_URL, contract
 from security import verify_auth_token, can_download, require_download_access
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -38,7 +41,7 @@ async def download_file_with_name(cid: str, filename: str, x_auth_token: Optiona
         )
 
     except Exception as e:
-        print(f"Download failed: {e}")
+        logger.error("Download failed: %s", e)
         return JSONResponse(status_code=502, content={"error": f"Failed to download file: {str(e)}"})
 
 
@@ -80,7 +83,7 @@ async def download_folder_zip(path: str, x_auth_token: Optional[str] = Header(No
                 if response.status_code == 200:
                     zf.writestr(f"{folder_name}/{rel}", response.content)
                 else:
-                    print(f"download-folder: skipping {cid} ({rel}), gateway {response.status_code}")
+                    logger.warning("download-folder: skipping %s (%s), gateway %s", cid, rel, response.status_code)
     buf.seek(0)
     return StreamingResponse(
         buf,
@@ -158,7 +161,7 @@ async def get_thumbnail(cid: str, x_auth_token: Optional[str] = Header(None)):
             img.thumbnail(THUMB_SIZE)
             img.save(thumb_path, "JPEG", quality=70)
         except Exception as e:
-            print(f"Thumbnail generation failed for {cid}: {e}")
+            logger.warning("Thumbnail generation failed for %s: %s", cid, e)
             return JSONResponse(status_code=404, content={"error": "Not a previewable image"})
 
     return StreamingResponse(

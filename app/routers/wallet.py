@@ -2,6 +2,7 @@
 for their first transactions. One drip per address, guarded by a JSON ledger."""
 import os
 import json
+import logging
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
@@ -9,6 +10,8 @@ from web3 import Web3
 
 from configure import w3
 from models import FundWalletRequest
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -53,7 +56,7 @@ async def fund_wallet(request: FundWalletRequest):
     faucet = w3.eth.account.from_key(private_key)
     faucet_balance = w3.from_wei(w3.eth.get_balance(faucet.address), "ether")
     if faucet_balance < FUND_AMOUNT_ETH:
-        print(f"[fund-wallet] faucet exhausted: {faucet_balance} ETH left")
+        logger.warning("[fund-wallet] faucet exhausted: %s ETH left", faucet_balance)
         return JSONResponse(status_code=503, content={"error": "Funding wallet exhausted"})
 
     tx = {
@@ -73,5 +76,5 @@ async def fund_wallet(request: FundWalletRequest):
 
     # Record only after confirmed success so a failed drip can be retried
     _save_funded_address(address)
-    print(f"[fund-wallet] sent {FUND_AMOUNT_ETH} SepETH to {address}: {tx_hash.hex()}")
+    logger.info("[fund-wallet] sent %s SepETH to %s: %s", FUND_AMOUNT_ETH, address, tx_hash.hex())
     return {"funded": True, "amount_eth": FUND_AMOUNT_ETH, "tx_hash": tx_hash.hex()}

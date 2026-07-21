@@ -1,10 +1,14 @@
 """File listing for the drive view, plus storage-capacity stats for the
 sidebar usage bar."""
+import logging
+
 import requests
 from fastapi import APIRouter
 from web3 import Web3
 
 from configure import IPFS_API_URL, IPFS_GATEWAY_URL, contract
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -28,7 +32,7 @@ def get_file_size(cid: str) -> int:
 # get all the files from the user on the smart contract -> updated to return metadata from new smart contract
 @router.get("/")
 async def get_files(user_address: str = None):
-    print("Fetching user files from smart contract...")
+    logger.debug("Fetching user files from smart contract")
     if user_address:
         user_address = Web3.to_checksum_address(user_address)
     user_files = contract.functions.getUserFiles(user_address).call()
@@ -61,7 +65,7 @@ async def get_files(user_address: str = None):
                 owner = contract.functions.getFileOwner(cid).call()
                 break
             except Exception as e:
-                print(f"getFileOwner failed for {cid} (attempt {attempt + 1}): {e}")
+                logger.warning("getFileOwner failed for %s (attempt %d): %s", cid, attempt + 1, e)
 
         is_owner = (owner is not None and owner.lower() == user_address.lower())
 
@@ -77,7 +81,7 @@ async def get_files(user_address: str = None):
             try:
                 shared_with = contract.functions.getSharedUsers(cid).call()
             except Exception as e:
-                print(f"getSharedUsers failed for {cid}: {e}")
+                logger.warning("getSharedUsers failed for %s: %s", cid, e)
 
         structured_files.append({
             "cid": cid,        # cid
@@ -93,7 +97,7 @@ async def get_files(user_address: str = None):
             "ipfs_url": f"{IPFS_GATEWAY_URL}/{cid}"
         })
 
-    # print(f"User files: {structured_files}")
+    logger.debug("User files: %s", structured_files)
     return {"user_files": structured_files}
 
 
@@ -111,11 +115,11 @@ def storage_stats():
             stats["ipfs_repo_size"] = j.get("RepoSize")
             stats["ipfs_storage_max"] = j.get("StorageMax")
     except Exception as e:
-        print(f"repo/stat failed: {e}")
+        logger.warning("repo/stat failed: %s", e)
     try:
         du = shutil.disk_usage("/")
         stats["disk_total"] = du.total
         stats["disk_free"] = du.free
     except Exception as e:
-        print(f"disk_usage failed: {e}")
+        logger.warning("disk_usage failed: %s", e)
     return stats
