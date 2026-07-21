@@ -43,6 +43,7 @@ async def move_file(request: MoveRequest):
 
     except Exception as e:
         logger.error("Failed to prep move transaction: %s", e)
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 
 # batch move: one moveFiles tx for folder rename / bulk trash / bulk restore

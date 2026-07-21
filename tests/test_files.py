@@ -1,0 +1,77 @@
+"""File listing and storage-stats endpoints."""
+import routers.files as files_mod
+from permissions import READ, DOWNLOAD
+
+OWNER = "0x1A28b19f6d2ea1A05F9eFFbcCcbF7E9571877981"
+OTHER = "0x3081Acc05169336e7875ad9f896bF6511397809a"
+
+
+def test_get_files_shapes_records(client, patch_contract, monkeypatch):
+    from web3 import Web3
+    owner_cs = Web3.to_checksum_address(OWNER)
+    patch_contract(
+        user_files=[
+            ("cid1", "docs/a.txt", "txt", 111),   # owned, nested
+            ("cid2", "b.txt", "txt", 222),         # shared to me (owned by OTHER), root
+        ],
+        owners={"cid1": owner_cs, "cid2": Web3.to_checksum_address(OTHER)},
+        shared={"cid1": [OTHER]},
+        permissions={("cid2", owner_cs): READ | DOWNLOAD},
+    )
+    monkeypatch.setattr(files_mod, "get_file_size", lambda cid: 42)
+
+    r = client.get("/", params={"user_address": OWNER})
+    assert r.status_code == 200
+    recs = {f["cid"]: f for f in r.json()["user_files"]}
+
+    assert recs["cid1"]["filename"] == "a.txt"
+    assert recs["cid1"]["folder_path"] == "/docs"
+    assert recs["cid1"]["is_owner"] is True
+    assert recs["cid1"]["shared_with"] == [OTHER]
+    assert recs["cid1"]["size"] == 42
+
+    assert recs["cid2"]["filename"] == "b.txt"
+    assert recs["cid2"]["folder_path"] == "/"
+    assert recs["cid2"]["is_owner"] is False
+    assert recs["cid2"]["shared_with"] == []       # only owners get a shared list
+    assert recs["cid2"]["permissions"] == READ | DOWNLOAD
+
+
+def test_get_files_empty(client, patch_contract):
+    patch_contract(user_files=[])
+    r = client.get("/", params={"user_address": OWNER})
+    assert r.status_code == 200
+    assert r.json() == {"user_files": []}
+
+
+class _Resp:
+    def __init__(self, ok, payload):
+        self.ok = ok
+        self.status_code = 200 if ok else 500
+        self._payload = payload
+
+    def json(self):
+        return self._payload
+
+
+def test_storage_stats_reports_disk_and_repo(client, monkeypatch):
+    monkeypatch.setattr(files_mod.requests, "post",
+                        lambda *a, **k: _Resp(True, {"RepoSize": 100, "StorageMax": 1000}))
+    r = client.get("/storage-stats")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ipfs_repo_size"] == 100
+    assert body["ipfs_storage_max"] == 1000
+    assert body["disk_total"] > 0
+    assert body["disk_free"] > 0
+
+
+def test_storage_stats_survives_ipfs_failure(client, monkeypatch):
+    def boom(*a, **k):
+        raise Exception("ipfs down")
+    monkeypatch.setattr(files_mod.requests, "post", boom)
+    r = client.get("/storage-stats")
+    assert r.status_code == 200
+    # IPFS keys absent, but disk stats still present
+    assert "ipfs_repo_size" not in r.json()
+    assert r.json()["disk_total"] > 0

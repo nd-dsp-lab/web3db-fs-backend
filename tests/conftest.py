@@ -1,0 +1,92 @@
+"""Shared test fixtures.
+
+Env vars are set BEFORE any app module is imported so configure.py builds a
+contract from a dummy address (no network) and security.py uses a known
+AUTH_SECRET. load_dotenv(override=False) in configure leaves these intact, so
+the suite is hermetic and never touches the real .env, IPFS, or Sepolia.
+"""
+import os
+import sys
+import time
+from types import SimpleNamespace
+
+# --- hermetic environment (must precede app imports) ---
+os.environ.setdefault("AUTH_SECRET", "00" * 32)
+os.environ.setdefault("CONTRACT_ADDRESS", "0x463FA1e9cF1f7f8b1b450708773aBa8BaBBe86AF")
+os.environ.setdefault("INFURA_URL", "http://localhost:9")  # unreachable on purpose
+os.environ.setdefault("LOG_LEVEL", "WARNING")
+
+APP_DIR = os.path.join(os.path.dirname(__file__), "..", "app")
+sys.path.insert(0, os.path.abspath(APP_DIR))
+
+import pytest  # noqa: E402
+from eth_account import Account  # noqa: E402
+from eth_account.messages import encode_defunct  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
+
+ZERO_ADDR = "0x0000000000000000000000000000000000000000"
+
+
+@pytest.fixture
+def client():
+    from server import app
+    return TestClient(app)
+
+
+class FakeContract:
+    """Stands in for a web3 contract. Each on-chain function is fed from a dict
+    or callable, and X(*args).call() looks the answer up by its first arg
+    (the cid), matching how the app calls getFileOwner / getPermissions / etc.
+    """
+
+    def __init__(self, owners=None, shared=None, permissions=None, user_files=None):
+        self._owners = owners or {}
+        self._shared = shared or {}
+        self._permissions = permissions or {}
+        self._user_files = user_files or []
+        self.functions = self  # app calls contract.functions.X(...)
+
+    def getFileOwner(self, cid):
+        return SimpleNamespace(call=lambda: self._owners.get(cid, ZERO_ADDR))
+
+    def getSharedUsers(self, cid):
+        return SimpleNamespace(call=lambda: list(self._shared.get(cid, [])))
+
+    def getPermissions(self, cid, user):
+        return SimpleNamespace(call=lambda: self._permissions.get((cid, user), 0))
+
+    def getUserFiles(self, user):
+        return SimpleNamespace(call=lambda: list(self._user_files))
+
+
+@pytest.fixture
+def patch_contract(monkeypatch):
+    """Install a FakeContract into every module that imported the real one.
+    Returns the installer so a test can shape the on-chain state it needs.
+    """
+    def _install(**kwargs):
+        fake = FakeContract(**kwargs)
+        for mod in ["configure", "security", "helpers",
+                    "routers.files", "routers.download",
+                    "routers.sharing", "routers.file_ops"]:
+            __import__(mod)
+            monkeypatch.setattr(sys.modules[mod], "contract", fake, raising=False)
+        return fake
+    return _install
+
+
+@pytest.fixture
+def sign_login():
+    """Produce (address, timestamp, signature) for the /auth/token flow using
+    a throwaway key, signing the exact message security.auth_message builds.
+    """
+    from security import auth_message
+
+    def _sign(timestamp=None):
+        ts = int(time.time()) if timestamp is None else timestamp
+        acct = Account.create()
+        msg = auth_message(acct.address, ts)
+        sig = Account.sign_message(encode_defunct(text=msg), acct.key).signature.hex()
+        return acct.address, ts, sig
+
+    return _sign
