@@ -26,7 +26,7 @@ async def delete_file(request: DeleteRequest):
 
     except Exception as e:
         print(f"Failed to prep delete transaction: {e}")
-        return {"error": str(e)}
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 
 # endpoint for moving a file
@@ -113,6 +113,5 @@ async def delete_folder(request: DeleteFolder = Body(...)):
         }
 
     except Exception as e:
-
         print(f"Failed to prep deleting folders transaction: {e}")
-        return {"error": str(e)}
+        return JSONResponse(status_code=500, content={"error": str(e)})

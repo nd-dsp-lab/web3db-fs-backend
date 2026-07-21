@@ -162,7 +162,7 @@ async def share_file(request: ShareRequest):
         return {"transaction": txn}
     except Exception as e:
         print(f"Failed to prepare share transaction: {e}")
-        return {"error": str(e)}
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 
 # Batch share (folder share): one grantFiles tx covering many cids
@@ -171,11 +171,11 @@ async def share_batch(request: ShareBatchRequest):
     try:
         txn, count = prepare_share_batch_transaction(request.cids, request.to_address, request.user_address)
         if txn is None:
-            return {"error": "No owned files to share"}
+            return JSONResponse(status_code=400, content={"error": "No owned files to share"})
         return {"transaction": txn, "count": count}
     except Exception as e:
         print(f"Failed to prepare batch share transaction: {e}")
-        return {"error": str(e)}
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 
 # Batch unshare (folder unshare): one revokeFiles tx covering many cids
@@ -184,11 +184,11 @@ async def unshare_batch(request: ShareBatchRequest):
     try:
         txn, count = prepare_unshare_batch_transaction(request.cids, request.to_address, request.user_address)
         if txn is None:
-            return {"error": "No owned files to unshare"}
+            return JSONResponse(status_code=400, content={"error": "No owned files to unshare"})
         return {"transaction": txn, "count": count}
     except Exception as e:
         print(f"Failed to prep batch unshare transaction: {e}")
-        return {"error": str(e)}
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 
 # endpoint for unsharing a file (frontend has to sign)
@@ -199,7 +199,7 @@ async def unshare_file(request: UnshareRequest):
         return {"transaction": txn}
     except Exception as e:
         print(f"Failed to prep unshare transaction: {e}")
-        return {"error": str(e)}
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 
 @router.get("/shared-users")

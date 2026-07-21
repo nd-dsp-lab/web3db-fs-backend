@@ -39,7 +39,7 @@ async def download_file_with_name(cid: str, filename: str, x_auth_token: Optiona
 
     except Exception as e:
         print(f"Download failed: {e}")
-        return {"error": f"Failed to download file: {str(e)}"}
+        return JSONResponse(status_code=502, content={"error": f"Failed to download file: {str(e)}"})
 
 
 # Download a whole folder as a zip. Token-authenticated; includes files under
