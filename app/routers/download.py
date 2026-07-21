@@ -97,7 +97,7 @@ async def download_folder_zip(path: str, x_auth_token: Optional[str] = Header(No
 # and cached on disk (content is immutable per CID, so the cache never
 # stales). Non-image or undecodable content returns 404 and the frontend
 # keeps its file-type icon.
-THUMBS_DIR = os.path.join(os.path.dirname(__file__), "..", "thumbs")
+THUMBS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "thumbs")
 THUMB_SIZE = (320, 320)
 
 

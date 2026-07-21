@@ -42,6 +42,6 @@ coverage/
 .pytest_cache/
 
 # don't accidentally track local runtime state (sensitive)
-app/funded_addresses.json
-app/thumbs/
-app/auth_secret.txt
+funded_addresses.json
+thumbs/
+auth_secret.txt

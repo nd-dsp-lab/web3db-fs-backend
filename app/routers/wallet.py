@@ -17,7 +17,7 @@ router = APIRouter()
 
 FUND_AMOUNT_ETH = 0.25
 FUND_BALANCE_THRESHOLD_ETH = 0.005
-FUNDED_ADDRESSES_FILE = os.path.join(os.path.dirname(__file__), "..", "funded_addresses.json")
+FUNDED_ADDRESSES_FILE = os.path.join(os.path.dirname(__file__), "..", "..", "funded_addresses.json")
 
 
 def _load_funded_addresses() -> set:

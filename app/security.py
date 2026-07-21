@@ -19,7 +19,7 @@ from permissions import DOWNLOAD
 
 logger = logging.getLogger(__name__)
 
-AUTH_SECRET_FILE = os.path.join(os.path.dirname(__file__), "auth_secret.txt")
+AUTH_SECRET_FILE = os.path.join(os.path.dirname(__file__), "..", "auth_secret.txt")
 AUTH_TOKEN_TTL = 24 * 3600
 AUTH_MESSAGE_MAX_AGE = 600  # seconds of clock skew allowed on the signed login message
 
