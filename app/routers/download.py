@@ -7,7 +7,7 @@ from typing import Optional
 
 import httpx
 from fastapi import APIRouter, Header
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.responses import Response, FileResponse, JSONResponse
 from web3 import Web3
 
 from configure import IPFS_GATEWAY_URL, contract
@@ -35,8 +35,11 @@ async def download_file_with_name(cid: str, filename: str, x_auth_token: Optiona
         if response.status_code != 200:
             raise Exception(f"Failed to fetch file from IPFS: {response.status_code}")
 
-        return StreamingResponse(
-            io.BytesIO(response.content),
+        # Return the full bytes with an explicit Content-Length (not a chunked
+        # StreamingResponse): the reverse proxy speaks HTTP/1.0, where chunked
+        # transfer-encoding is invalid, which broke PDF preview through it.
+        return Response(
+            content=response.content,
             media_type="application/octet-stream",
             headers={"Content-Disposition": f"attachment; filename={filename}"}
         )
@@ -87,9 +90,8 @@ async def download_folder_zip(path: str, x_auth_token: Optional[str] = Header(No
                     zf.writestr(f"{folder_name}/{rel}", response.content)
                 else:
                     logger.warning("download-folder: skipping %s (%s), gateway %s", cid, rel, response.status_code)
-    buf.seek(0)
-    return StreamingResponse(
-        buf,
+    return Response(
+        content=buf.getvalue(),
         media_type="application/zip",
         headers={"Content-Disposition": f"attachment; filename={folder_name}.zip"},
     )
@@ -167,8 +169,8 @@ async def get_thumbnail(cid: str, x_auth_token: Optional[str] = Header(None)):
             logger.warning("Thumbnail generation failed for %s: %s", cid, e)
             return JSONResponse(status_code=404, content={"error": "Not a previewable image"})
 
-    return StreamingResponse(
-        open(thumb_path, "rb"),
+    return FileResponse(
+        thumb_path,
         media_type="image/jpeg",
         headers={"Cache-Control": "private, max-age=86400"}
     )
