@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, Form, Body, Header
+from fastapi import FastAPI, UploadFile, Form, Header
 import requests
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse
@@ -10,15 +10,11 @@ import httpx
 import uvicorn
 from dotenv import load_dotenv
 from typing import Optional, List
-from models import TransactionRequest, DeleteRequest, MoveRequest, DeleteFolder, FundWalletRequest, DeleteBatchRequest, MoveBatchRequest
+from models import TransactionRequest, FundWalletRequest
 from configure import configure_app, IPFS_API_URL, IPFS_GATEWAY_URL, w3, contract
 from helpers import (
     prepare_upload_transaction,
     prepare_upload_batch_transaction,
-    prepare_delete_transaction,
-    prepare_move_transaction,
-    prepare_move_batch_transaction,
-    prepare_delete_folder,
     unpin_cid,
     folder_share_set,
     prepare_inherited_grant_transactions,
@@ -26,12 +22,14 @@ from helpers import (
 from security import verify_auth_token, can_download, require_download_access
 from routers.auth import router as auth_router
 from routers.sharing import router as sharing_router
+from routers.file_ops import router as file_ops_router
 
 # This will be a simple fastAPI server that acts as an sgx node
 app = FastAPI()
 configure_app(app)  # CORS + other startup steps
 app.include_router(auth_router)
 app.include_router(sharing_router)
+app.include_router(file_ops_router)
 
 # CID -> size cache; content is immutable per CID so entries never go stale
 _file_size_cache = {}
