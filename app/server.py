@@ -23,4 +23,8 @@ app.include_router(files_router)
 app.include_router(wallet_router)
 
 if __name__ == "__main__":
-    uvicorn.run("server:app", host="0.0.0.0", port=8090, reload=True)
+    # log_config=None: don't let uvicorn install its own handlers. Its
+    # access/error loggers then propagate to the root logger configured in
+    # logging_config, so request lines land in logs/web3fs.log in our format
+    # instead of a separate stream.
+    uvicorn.run("server:app", host="0.0.0.0", port=8090, reload=True, log_config=None)

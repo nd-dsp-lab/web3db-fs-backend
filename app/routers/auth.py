@@ -31,9 +31,11 @@ async def issue_auth_token(request: AuthTokenRequest):
         logger.warning("Auth signature recovery failed: %s", e)
         return JSONResponse(status_code=401, content={"error": "Invalid signature"})
     if recovered.lower() != request.address.lower():
+        logger.warning("Auth denied: signature recovered %s, expected %s", recovered.lower(), request.address.lower())
         return JSONResponse(status_code=401, content={"error": "Signature does not match address"})
 
     address = request.address.lower()
     expiry = int(time.time()) + AUTH_TOKEN_TTL
     payload = f"{address}.{expiry}"
+    logger.info("Auth token issued for %s", address)
     return {"token": f"{payload}.{_token_signature(payload)}", "expires": expiry}

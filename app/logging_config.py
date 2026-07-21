@@ -21,6 +21,13 @@ MAX_BYTES = 5 * 1024 * 1024  # 5 MB per file
 BACKUP_COUNT = 5             # keep 5 rotations -> ~25 MB ceiling
 
 
+class _DropOptions(logging.Filter):
+    """Drop CORS preflight lines from the uvicorn access log — every real
+    request is preceded by an OPTIONS 200 that carries no signal."""
+    def filter(self, record):
+        return '"OPTIONS ' not in record.getMessage()
+
+
 def setup_logging():
     global _configured
     if _configured:
@@ -55,5 +62,11 @@ def setup_logging():
             # A read-only or missing volume shouldn't take the server down;
             # console logging still works.
             root.warning("File logging disabled (%s): %s", log_dir, e)
+
+    # Quiet the httpx client's per-request INFO lines (the IPFS gateway fetch
+    # behind each download is already covered by our own "Serving" log).
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    # Keep CORS preflights out of the access log.
+    logging.getLogger("uvicorn.access").addFilter(_DropOptions())
 
     _configured = True

@@ -24,6 +24,7 @@ async def download_file_with_name(cid: str, filename: str, x_auth_token: Optiona
     denied = require_download_access(cid, x_auth_token)
     if denied:
         return denied
+    logger.info("Serving %s (%s) to %s", filename, cid, verify_auth_token(x_auth_token or ""))
     try:
         # follow_redirects: kubo's gateway 301-redirects /ipfs/{cid} to the
         # subdomain gateway ({cid}.ipfs.localhost)
@@ -54,6 +55,7 @@ async def download_folder_zip(path: str, x_auth_token: Optional[str] = Header(No
 
     address = verify_auth_token(x_auth_token or "")
     if not address:
+        logger.warning("Folder download denied for %s: missing or invalid auth token", path)
         return JSONResponse(status_code=401, content={"error": "Missing or invalid auth token"})
 
     prefix = "/" + "/".join(p for p in path.split("/") if p)
@@ -75,6 +77,7 @@ async def download_folder_zip(path: str, x_auth_token: Optional[str] = Header(No
         return JSONResponse(status_code=404, content={"error": "Folder is empty"})
 
     folder_name = prefix.rsplit("/", 1)[-1]
+    logger.info("Serving folder %s (%d files) to %s", prefix, len(entries), address)
     buf = io.BytesIO()
     async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
