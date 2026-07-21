@@ -13,8 +13,8 @@ __pycache__/
 .venv/
 venv/
 
-# IPFS data
-app/ipfs/data/
+# IPFS node data (do not track; keystore under here is sensitive)
+ipfs/data/
 **/ipfs/data/
 *.cache
 
@@ -41,12 +41,7 @@ coverage/
 .coverage
 .pytest_cache/
 
-# IPFS node data (do not track)
-app/ipfs/data/
-app/ipfs/data/**
-
-# don't accidentally track keystore files (sensitive)
-app/ipfs/data/ipfs/keystore/
+# don't accidentally track local runtime state (sensitive)
 app/funded_addresses.json
 app/thumbs/
 app/auth_secret.txt
