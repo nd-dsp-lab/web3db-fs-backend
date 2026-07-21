@@ -15,6 +15,7 @@ os.environ.setdefault("AUTH_SECRET", "00" * 32)
 os.environ.setdefault("CONTRACT_ADDRESS", "0x463FA1e9cF1f7f8b1b450708773aBa8BaBBe86AF")
 os.environ.setdefault("INFURA_URL", "http://localhost:9")  # unreachable on purpose
 os.environ.setdefault("LOG_LEVEL", "WARNING")
+os.environ.setdefault("LOG_DIR", "")  # console only; don't write a log file during tests
 
 APP_DIR = os.path.join(os.path.dirname(__file__), "..", "app")
 sys.path.insert(0, os.path.abspath(APP_DIR))
