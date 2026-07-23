@@ -26,7 +26,7 @@ jobs:
       # cov-fail-under is a ratchet pinned at the coverage on the day it was
       # added, not a target. Raise it when coverage rises; never lower it to
       # make a build pass.
-      - run: pytest -q -m "not e2e" --cov --cov-report=term-missing --cov-fail-under=70
+      - run: pytest -q -m "not e2e" --cov --cov-report=term-missing --cov-fail-under=77
 
   e2e:
     runs-on: ubuntu-latest
