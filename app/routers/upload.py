@@ -120,12 +120,19 @@ async def upload_folder(
         folder_path = paths[idx] if idx < len(paths) else "/"
         logger.debug("[%d] Uploading %s to IPFS (folder: %s)", idx, file.filename, folder_path)
 
+        # Chrome sends webkitRelativePath as the multipart filename for folder
+        # uploads ("Docs/a.pdf"). A slashed name makes `ipfs add` build a
+        # wrapper directory and return the dir CID last, so the stored CID
+        # would resolve to a gateway listing page instead of the file — always
+        # add under the leaf name.
+        actual_filename = file.filename.split('/')[-1]
+
         # Read file and upload to IPFS
         file_data = await file.read()
         # Add unpinned — pin only after the duplicate checks pass (see /upload)
         ipfs_response = requests.post(
             f"{IPFS_API_URL}/add?pin=false",
-            files={"file": (file.filename, file_data)}
+            files={"file": (actual_filename, file_data)}
         )
         if ipfs_response.status_code != 200:
             logger.warning("Failed to upload %s to IPFS", file.filename)
@@ -142,9 +149,6 @@ async def upload_folder(
         except Exception as e:
             logger.error("Error parsing IPFS response: %s | raw: %s", e, raw_text)
             continue
-
-        # Extract just the filename without the folder path
-        actual_filename = file.filename.split('/')[-1]
 
         # Skip files whose content already exists on-chain — building the tx
         # would revert with "File already exists" and 500 the whole batch
