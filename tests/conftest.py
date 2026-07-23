@@ -77,6 +77,86 @@ def patch_contract(monkeypatch):
     return _install
 
 
+class FakeFn:
+    """One contract function call. Reads answer via .call(); writes record the
+    base transaction they were handed and echo the function name and args back
+    inside the built transaction so tests can assert on both."""
+
+    def __init__(self, name, args, contract):
+        self.name = name
+        self.args = args
+        self.contract = contract
+
+    def call(self):
+        return self.contract.answer(self.name, self.args)
+
+    def estimate_gas(self, base_tx):
+        self.contract.estimates.append((self.name, self.args, dict(base_tx)))
+        return self.contract.gas_estimate
+
+    def build_transaction(self, base_tx):
+        self.contract.built.append((self.name, self.args, dict(base_tx)))
+        return {**base_tx, "_fn": self.name, "_args": self.args}
+
+
+class FakeTxContract:
+    """Contract stand-in for the helpers layer, where the interesting output is
+    the *transaction dict* rather than a route's JSON body."""
+
+    def __init__(self, owners=None, shared=None, user_files=None, gas_estimate=100_000):
+        self._owners = owners or {}
+        self._shared = shared or {}
+        self._user_files = user_files or []
+        self.gas_estimate = gas_estimate
+        self.built = []      # [(fn_name, args, base_tx)] for build_transaction
+        self.estimates = []  # [(fn_name, args, base_tx)] for estimate_gas
+        self.functions = self
+
+    def answer(self, name, args):
+        if name == "getFileOwner":
+            return self._owners.get(args[0], ZERO_ADDR)
+        if name == "getSharedUsers":
+            return list(self._shared.get(args[0], []))
+        if name == "getUserFiles":
+            return list(self._user_files)
+        raise AssertionError(f"unexpected read call: {name}")
+
+    def __getattr__(self, name):
+        if name.startswith("_"):
+            raise AttributeError(name)
+        return lambda *args: FakeFn(name, args, self)
+
+
+class FakeEth:
+    def __init__(self, nonce=7, gas_price=1_000_000_000):
+        self.gas_price = gas_price
+        self._nonce = nonce
+        self.nonce_queries = []
+
+    def get_transaction_count(self, address):
+        self.nonce_queries.append(address)
+        return self._nonce
+
+
+@pytest.fixture
+def patch_helpers(monkeypatch):
+    """Install a transaction-capturing contract and a fake w3 into helpers.
+
+    Returns (contract, eth) so a test can shape on-chain state and then assert
+    on what was built.
+    """
+    import helpers
+
+    def _install(nonce=7, gas_price=1_000_000_000, **contract_kwargs):
+        fake = FakeTxContract(**contract_kwargs)
+        eth = FakeEth(nonce=nonce, gas_price=gas_price)
+        monkeypatch.setattr(helpers, "contract", fake)
+        monkeypatch.setattr(helpers, "w3", SimpleNamespace(eth=eth))
+        return fake, eth
+
+    return _install
+
+
 @pytest.fixture
 def auth_token():
     """Mint a valid download token for an address, as /auth/token would."""
