@@ -1,0 +1,15 @@
+[run]
+source = app
+omit =
+    app/FileStorage.json
+    */__pycache__/*
+
+[report]
+# Show which lines are untested, and don't count defensive re-raises or the
+# __main__ block as gaps.
+show_missing = True
+skip_covered = False
+exclude_lines =
+    pragma: no cover
+    if __name__ == .__main__.:
+    raise NotImplementedError

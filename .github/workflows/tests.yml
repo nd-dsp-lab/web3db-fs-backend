@@ -22,7 +22,11 @@ jobs:
       # Hermetic: conftest sets a dummy contract address and an unreachable RPC
       # URL before any app module loads, so no .env, IPFS node or Sepolia access
       # is needed. The e2e tests skip themselves here for want of a node.
-      - run: pytest -q -m "not e2e"
+      #
+      # cov-fail-under is a ratchet pinned at the coverage on the day it was
+      # added, not a target. Raise it when coverage rises; never lower it to
+      # make a build pass.
+      - run: pytest -q -m "not e2e" --cov --cov-report=term-missing --cov-fail-under=70
 
   e2e:
     runs-on: ubuntu-latest
