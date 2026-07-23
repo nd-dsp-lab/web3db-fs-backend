@@ -5,6 +5,7 @@ contract from a dummy address (no network) and security.py uses a known
 AUTH_SECRET. load_dotenv(override=False) in configure leaves these intact, so
 the suite is hermetic and never touches the real .env, IPFS, or Sepolia.
 """
+import json
 import os
 import sys
 import time
@@ -68,11 +69,111 @@ def patch_contract(monkeypatch):
     def _install(**kwargs):
         fake = FakeContract(**kwargs)
         for mod in ["configure", "security", "helpers",
-                    "routers.files", "routers.download",
+                    "routers.files", "routers.download", "routers.upload",
                     "routers.sharing", "routers.file_ops"]:
             __import__(mod)
             monkeypatch.setattr(sys.modules[mod], "contract", fake, raising=False)
         return fake
+    return _install
+
+
+@pytest.fixture
+def auth_token():
+    """Mint a valid download token for an address, as /auth/token would."""
+    from security import _token_signature
+
+    def _make(address, ttl=100):
+        payload = f"{address.lower()}.{int(time.time()) + ttl}"
+        return f"{payload}.{_token_signature(payload)}"
+
+    return _make
+
+
+class FakeIPFSResponse:
+    def __init__(self, text, status_code=200):
+        self.text = text
+        self.status_code = status_code
+        self.content = text.encode()
+        self.raw = SimpleNamespace(readline=lambda: text.splitlines()[0].encode())
+
+    def raise_for_status(self):
+        if self.status_code != 200:
+            raise Exception(f"HTTP {self.status_code}")
+
+    def close(self):
+        pass
+
+
+class FakeIPFS:
+    """Emulates the kubo /add and /pin/add HTTP API.
+
+    Faithful on the one behaviour that has bitten us: adding under a name
+    containing a slash makes kubo build a wrapper directory and emit an extra
+    line for it *last*, so a caller that keeps the last line stores the
+    directory CID instead of the file's.
+    """
+
+    def __init__(self):
+        self.added_names = []   # names as handed to /add
+        self.pinned = []
+
+    def cid_for(self, name):
+        return "Qmfile" + name.split("/")[-1].replace(".", "")
+
+    def post(self, url, files=None, **kwargs):
+        if "/pin/add" in url:  # must precede the /add check — it contains it
+            self.pinned.append(url.split("arg=")[-1])
+            return FakeIPFSResponse("{}")
+        if "/add" in url:
+            name, _data = files["file"]
+            self.added_names.append(name)
+            lines = [json.dumps({"Name": name, "Hash": self.cid_for(name), "Size": "10"})]
+            if "/" in name:
+                wrapper = name.split("/")[0]
+                lines.append(json.dumps({"Name": wrapper, "Hash": "Qmdir" + wrapper, "Size": "20"}))
+            return FakeIPFSResponse("\n".join(lines))
+        return FakeIPFSResponse("{}", status_code=404)
+
+
+@pytest.fixture
+def fake_ipfs(monkeypatch):
+    """Swap the `requests` module used by the upload router for a fake node."""
+    import routers.upload as upload
+
+    node = FakeIPFS()
+    monkeypatch.setattr(upload, "requests", node)
+    return node
+
+
+@pytest.fixture
+def fake_gateway(monkeypatch):
+    """Swap httpx.AsyncClient in the download router for a scripted gateway.
+
+    Call the returned installer with {cid: bytes} plus an optional status for
+    misses; it records which CIDs were fetched.
+    """
+    import routers.download as download
+
+    def _install(content_by_cid, miss_status=404):
+        fetched = []
+
+        class FakeClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return False
+
+            async def get(self, url):
+                cid = url.rstrip("/").split("/")[-1]
+                fetched.append(cid)
+                if cid in content_by_cid:
+                    return SimpleNamespace(status_code=200, content=content_by_cid[cid])
+                return SimpleNamespace(status_code=miss_status, content=b"")
+
+        monkeypatch.setattr(download.httpx, "AsyncClient", lambda **kw: FakeClient())
+        return fetched
+
     return _install
 
 
