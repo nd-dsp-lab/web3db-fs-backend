@@ -58,7 +58,7 @@ def _extract_eth_address(privy_user: dict) -> Optional[str]:
 
 
 @router.post("/notify-share")
-async def notify_share(request: NotifyShareRequest):
+def notify_share(request: NotifyShareRequest):
     import smtplib
     from email.mime.text import MIMEText
 
@@ -159,7 +159,7 @@ async def resolve_recipient(request: ResolveRecipientRequest):
 
 # endpoint for sharing a file (frontend has to sign)
 @router.post("/share")
-async def share_file(request: ShareRequest):
+def share_file(request: ShareRequest):
     try:
         txn = prepare_share_transaction(request.cid, request.to_address, request.user_address)
         return {"transaction": txn}
@@ -170,7 +170,7 @@ async def share_file(request: ShareRequest):
 
 # Batch share (folder share): one grantFiles tx covering many cids
 @router.post("/share-batch")
-async def share_batch(request: ShareBatchRequest):
+def share_batch(request: ShareBatchRequest):
     try:
         txn, count = prepare_share_batch_transaction(request.cids, request.to_address, request.user_address)
         if txn is None:
@@ -183,7 +183,7 @@ async def share_batch(request: ShareBatchRequest):
 
 # Batch unshare (folder unshare): one revokeFiles tx covering many cids
 @router.post("/unshare-batch")
-async def unshare_batch(request: ShareBatchRequest):
+def unshare_batch(request: ShareBatchRequest):
     try:
         txn, count = prepare_unshare_batch_transaction(request.cids, request.to_address, request.user_address)
         if txn is None:
@@ -196,7 +196,7 @@ async def unshare_batch(request: ShareBatchRequest):
 
 # endpoint for unsharing a file (frontend has to sign)
 @router.post("/unshare")
-async def unshare_file(request: UnshareRequest):
+def unshare_file(request: UnshareRequest):
     try:
         txn = prepare_unshare_transaction(request.cid, request.to_address, request.user_address)
         return {"transaction": txn}

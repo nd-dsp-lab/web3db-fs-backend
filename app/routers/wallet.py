@@ -36,7 +36,7 @@ def _save_funded_address(address: str):
 
 
 @router.post("/fund-wallet")
-async def fund_wallet(request: FundWalletRequest):
+def fund_wallet(request: FundWalletRequest):
     try:
         address = Web3.to_checksum_address(request.address)
     except Exception:

@@ -31,7 +31,7 @@ def get_file_size(cid: str) -> int:
 
 # get all the files from the user on the smart contract -> updated to return metadata from new smart contract
 @router.get("/")
-async def get_files(user_address: str = None):
+def get_files(user_address: str = None):
     logger.debug("Fetching user files from smart contract")
     if user_address:
         user_address = Web3.to_checksum_address(user_address)

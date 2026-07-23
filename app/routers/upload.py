@@ -225,7 +225,7 @@ async def upload_folder(
 
 # New endpoint to verify transaction was successful
 @router.post("/verify-upload")
-async def verify_upload(request: TransactionRequest):
+def verify_upload(request: TransactionRequest):
     try:
         logger.info("Waiting for transaction receipt for: %s", request.tx_hash)
         receipt = w3.eth.wait_for_transaction_receipt(request.tx_hash, timeout=120)

@@ -21,7 +21,7 @@ router = APIRouter()
 
 
 @router.post("/auth/token")
-async def issue_auth_token(request: AuthTokenRequest):
+def issue_auth_token(request: AuthTokenRequest):
     if abs(time.time() - request.timestamp) > AUTH_MESSAGE_MAX_AGE:
         return JSONResponse(status_code=400, content={"error": "Login message expired, retry"})
     try:

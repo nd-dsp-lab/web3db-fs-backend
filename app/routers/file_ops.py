@@ -22,7 +22,7 @@ router = APIRouter()
 
 # endpoint for deleting a file
 @router.post("/delete")
-async def delete_file(request: DeleteRequest):
+def delete_file(request: DeleteRequest):
     try:
         txn = prepare_delete_transaction(request.cid, request.user_address)
         result = {"transaction": txn}
@@ -35,7 +35,7 @@ async def delete_file(request: DeleteRequest):
 
 # endpoint for moving a file
 @router.post("/move")
-async def move_file(request: MoveRequest):
+def move_file(request: MoveRequest):
     try:
         txn = prepare_move_transaction(request.cid, request.new_path, request.user_address)
         result = {"transaction": txn}
@@ -48,7 +48,7 @@ async def move_file(request: MoveRequest):
 
 # batch move: one moveFiles tx for folder rename / bulk trash / bulk restore
 @router.post("/move-batch")
-async def move_batch(request: MoveBatchRequest = Body(...)):
+def move_batch(request: MoveBatchRequest = Body(...)):
     try:
         if len(request.cids) != len(request.new_paths):
             return JSONResponse(status_code=400, content={"error": "cids/new_paths length mismatch"})
@@ -62,7 +62,7 @@ async def move_batch(request: MoveBatchRequest = Body(...)):
 # batch delete of explicit CIDs (multi-select delete-forever); reuses the
 # same cleanFolder contract call as folder deletion — one signed tx
 @router.post("/delete-batch")
-async def delete_batch(request: DeleteBatchRequest = Body(...)):
+def delete_batch(request: DeleteBatchRequest = Body(...)):
     try:
         user_address = Web3.to_checksum_address(request.user_address)
         # only allow CIDs the user actually owns
@@ -84,7 +84,7 @@ async def delete_batch(request: DeleteBatchRequest = Body(...)):
 
 # endpoint for deleting a folder
 @router.post("/delete-folder")
-async def delete_folder(request: DeleteFolder = Body(...)):
+def delete_folder(request: DeleteFolder = Body(...)):
     try:
         user_address = Web3.to_checksum_address(request.user_address)
         user_files = contract.functions.getUserFiles(user_address).call()
