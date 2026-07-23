@@ -19,7 +19,54 @@ jobs:
 
       - run: pip install -r requirements.txt
 
-      # The suite is hermetic: conftest sets a dummy contract address and an
-      # unreachable RPC URL before any app module loads, so no .env, IPFS node
-      # or Sepolia access is needed here.
-      - run: pytest -q
+      # Hermetic: conftest sets a dummy contract address and an unreachable RPC
+      # URL before any app module loads, so no .env, IPFS node or Sepolia access
+      # is needed. The e2e tests skip themselves here for want of a node.
+      - run: pytest -q -m "not e2e"
+
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      # A throwaway kubo node. Started with plain docker run rather than a
+      # service container because the API has to be rebound to 0.0.0.0 before
+      # the daemon starts, which needs an entrypoint of our own.
+      - name: Start IPFS node
+        run: |
+          docker run -d --name ipfs-ci -p 5555:5001 -p 8085:8080 \
+            --entrypoint sh ipfs/kubo:latest -c "
+              ipfs init --profile server || true &&
+              ipfs config Addresses.API /ip4/0.0.0.0/tcp/5001 &&
+              ipfs config Addresses.Gateway /ip4/0.0.0.0/tcp/8080 &&
+              ipfs daemon --migrate"
+
+      - name: Wait for the node
+        run: |
+          for i in $(seq 1 60); do
+            curl -sf -X POST http://127.0.0.1:5555/api/v0/version && exit 0
+            sleep 2
+          done
+          echo "IPFS node never came up"; docker logs ipfs-ci; exit 1
+
+      # These cannot skip: the wait step above already failed the job if the
+      # node never came up, and that is the only skip condition.
+      - name: Round trips against the real node
+        env:
+          IPFS_API_URL: http://127.0.0.1:5555/api/v0
+          IPFS_GATEWAY_URL: http://127.0.0.1:8085/ipfs
+        run: pytest -q -m e2e
+
+      - name: Node logs on failure
+        if: failure()
+        run: docker logs ipfs-ci
+
+      - if: always()
+        run: docker rm -f ipfs-ci
