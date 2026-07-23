@@ -46,20 +46,11 @@ contract FileStorage {
         _;
     }
 
-    // Core permission functions -> from Yanchen
-    function setPermissions(string memory cid, address user, uint256 newPermissions)
-        external
-        onlyFileOwner(cid)
-    {
-        require(user != address(0), "Invalid user");
-        _permissions[cid][user] = newPermissions;
-        emit PermissionGranted(cid, user, newPermissions);
-    }
-
     function _grant(string memory cid, address user, uint256 grantMask)
         internal
         onlyFileOwner(cid)
     {
+        require(user != address(0), "Invalid user");
         // add to sharedFiles if first time getting permissions
         if (_permissions[cid][user] == 0) {
             sharedFiles[user].push(cid);
@@ -252,17 +243,6 @@ contract FileStorage {
         return sharedUsers[cid];
     }
 
-    // Helper to find metadata (in internal memory, not blockchain)
-    function _findOwnerFileMeta(address owner, string memory cid) internal view returns (FileMetadata memory) {
-        uint256 len = userFiles[owner].length;
-        for (uint256 i= 0; i < len; i++) {
-            if (keccak256(bytes(userFiles[owner][i].cid)) == keccak256(bytes(cid))) {
-                return userFiles[owner][i];
-            }
-        }
-        revert("File not found for owner");
-    }
-
     // Deletes file metadata from owner's list, gets rid of fileOwner mapping, and unshares from anyone (only owner can delete)
     function deleteFile(string memory cid) public onlyFileOwner(cid) {
         address owner = msg.sender; // has to be owner because of modifier
@@ -339,28 +319,15 @@ contract FileStorage {
         }
     }
 
-    //Delete folders and file metadata from owners list
-   function cleanFolder(string[] memory cids)public {
-        address user = msg.sender;
-        for (uint256 k =0; k<cids.length; k++){
-            string memory cid = cids[k];
-
-            if (fileOwner[cid] == user){
-                deleteFile(cid);
-            } else {
-                FileMetadata[] storage files = userFiles[user];
-                for (uint256 i = 0; i< files.length; i ++){
-                    if (keccak256(bytes(files[i].cid)) == keccak256(bytes(cid))) {
-                        if (i != files.length - 1) {
-                            files[i] = files[files.length - 1];
-                        }
-                        files.pop();
-                        break;
-                    }
-                }
+    // Bulk folder delete: delete every file in the batch the caller owns.
+    // Cids the caller does not own are skipped, so a mixed batch never reverts.
+    function cleanFolder(string[] memory cids) public {
+        for (uint256 k = 0; k < cids.length; k++) {
+            if (fileOwner[cids[k]] == msg.sender) {
+                deleteFile(cids[k]);
             }
         }
-   }
+    }
 }
 
 // Not storing actual files -> that lives on IPFS
