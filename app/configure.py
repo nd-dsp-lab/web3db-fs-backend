@@ -16,22 +16,29 @@ logger = logging.getLogger(__name__)
 env_path = os.path.join(os.path.dirname(__file__), '..', '.env')
 load_dotenv(dotenv_path=env_path)
 
-# Allow frontend origin
+# Browser origins allowed to call this API. Extra origins (preview builds,
+# tunnels) can be added per-deploy via CORS_ORIGINS="https://a,https://b"
+# without editing code.
 origins = [
     "http://localhost:3000",
     "http://fs.web3db.org",
     "https://fs.web3db.org",
     "https://proxy.web3db.org",
 ]
+origins += [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]
+
 
 def configure_app(app):
+    # allow_credentials stays False: auth rides on the x-auth-token header,
+    # never on cookies, and "*"-with-credentials is rejected by browsers anyway.
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],  #or ["*"] for all origins
-        allow_credentials=True,
-        allow_methods=["*"],
+        allow_origins=origins,
+        allow_credentials=False,
+        allow_methods=["GET", "POST", "OPTIONS"],
         allow_headers=["*"],
     )
+    logger.info("CORS origins allowed: %s", ", ".join(origins))
 
     logger.info("server started listening on port 8090")
 
