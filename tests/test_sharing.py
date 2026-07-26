@@ -116,6 +116,19 @@ def test_shared_users_batch_without_token_is_401(client, patch_contract):
     assert r.status_code == 401
 
 
+def test_shared_users_batch_needs_no_user_address(client, patch_contract, auth_token):
+    # The endpoint reads the caller from the token, so a body of cids alone is
+    # complete. It borrowed DeleteBatchRequest once, which made this a 422.
+    patch_contract(owners={"cidA": OWNER}, shared={"cidA": [RECIPIENT]})
+    r = client.post("/shared-users-batch",
+                    json={"cids": ["cidA"]},
+                    headers={"x-auth-token": auth_token(OWNER)})
+    assert r.status_code == 200
+    assert r.json() == {"shared_with": [RECIPIENT]}
+
+
+# Older clients still send user_address; unknown fields must stay tolerated,
+# and a claimed address must never decide whose sharing graph comes back.
 def test_shared_users_batch_ignores_a_spoofed_user_address(client, patch_contract, auth_token):
     patch_contract(owners={"cidA": OWNER}, shared={"cidA": [RECIPIENT]})
     r = client.post("/shared-users-batch",

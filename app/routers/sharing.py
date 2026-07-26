@@ -17,7 +17,7 @@ from models import (
     ShareBatchRequest,
     NotifyShareRequest,
     ResolveRecipientRequest,
-    DeleteBatchRequest,
+    CidBatchRequest,
 )
 from helpers import (
     prepare_share_transaction,
@@ -229,9 +229,9 @@ def get_shared_users(cid: str, x_auth_token: Optional[str] = Header(None)):
 
 # Folder share modal: union of shared users across every owned cid in the
 # folder (POST because a folder can hold more cids than a query string fits).
-# request.user_address is ignored — the requester comes from the token.
+# The requester comes from the token, so the body carries cids and nothing else.
 @router.post("/shared-users-batch")
-def get_shared_users_batch(request: DeleteBatchRequest, x_auth_token: Optional[str] = Header(None)):
+def get_shared_users_batch(request: CidBatchRequest, x_auth_token: Optional[str] = Header(None)):
     requester = verify_auth_token(x_auth_token or "")
     if not requester:
         logger.warning("shared-users-batch denied: missing or invalid auth token")

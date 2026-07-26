@@ -46,6 +46,12 @@ class DeleteBatchRequest(BaseModel):
     cids: List[str]
     user_address: str
 
+# Read-only batch lookups: the caller is identified by their auth token, so
+# there is no address to supply. Callers that still send one are tolerated —
+# pydantic ignores unknown fields — which keeps older clients working.
+class CidBatchRequest(BaseModel):
+    cids: List[str]
+
 class MoveBatchRequest(BaseModel):
     cids: List[str]
     new_paths: List[str]
