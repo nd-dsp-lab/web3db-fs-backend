@@ -123,7 +123,7 @@ def test_multi_file_folder_upload_and_zip_download(client, patch_contract, auth_
 
     for u in uploaded:
         contract._owners[u["cid"]] = OWNER
-    contract._user_files = [(u["cid"], u["folder_path"], u["file_format"], 1) for u in uploaded]
+    contract._user_files = [(u["cid"], u["full_path"], u["file_format"], 1) for u in uploaded]
 
     down = client.get("/download-folder", params={"path": "/Docs"},
                       headers={"x-auth-token": auth_token(OWNER)})

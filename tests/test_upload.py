@@ -1,4 +1,5 @@
 """Upload endpoints: single file, folder batch, and the CID the batch stores."""
+import helpers
 import routers.upload as upload
 
 OWNER = "0x1A28b19f6d2ea1A05F9eFFbcCcbF7E9571877981"
@@ -6,7 +7,8 @@ OTHER = "0x3081Acc05169336e7875ad9f896bF6511397809a"
 
 
 def _no_inherited_sharing(monkeypatch):
-    monkeypatch.setattr(upload, "folder_share_set", lambda *a: [])
+    # Inherited sharing is prepared in helpers now; stub the whole step.
+    monkeypatch.setattr(upload, "prepare_inherited_shares", lambda *a: ([], []))
 
 
 # --- /upload (single file) ---
@@ -92,7 +94,7 @@ def test_folder_upload_keeps_paths_and_leaf_filenames(
 
     uploaded = r.json()["uploaded_files"]
     assert [u["filename"] for u in uploaded] == ["a.pdf", "b.txt"]
-    assert [u["folder_path"] for u in uploaded] == ["/Docs/a.pdf", "/Docs/sub/b.txt"]
+    assert [u["full_path"] for u in uploaded] == ["/Docs/a.pdf", "/Docs/sub/b.txt"]
     assert [u["file_format"] for u in uploaded] == ["pdf", "txt"]
 
 
@@ -156,8 +158,10 @@ def test_folder_upload_grants_to_shared_folder_recipients(
         client, patch_contract, fake_ipfs, monkeypatch):
     patch_contract()
     monkeypatch.setattr(upload, "prepare_upload_batch_transaction", lambda *a: {"tx": "batch"})
-    monkeypatch.setattr(upload, "folder_share_set", lambda addr, path: [OTHER])
-    monkeypatch.setattr(upload, "prepare_inherited_grant_transactions",
+    # Both seams live in helpers now, which is where prepare_inherited_shares
+    # calls them — patching the router would no longer be reached.
+    monkeypatch.setattr(helpers, "folder_share_set", lambda addr, path: [OTHER])
+    monkeypatch.setattr(helpers, "prepare_inherited_grant_transactions",
                         lambda cids, users, addr: [{"grant": u, "cids": list(cids)} for u in users])
 
     r = _folder_post(client, [
@@ -169,3 +173,39 @@ def test_folder_upload_grants_to_shared_folder_recipients(
     assert body["auto_shared_with"] == [OTHER]
     assert body["share_transactions"][0]["cids"] == [
         fake_ipfs.cid_for("a.pdf"), fake_ipfs.cid_for("b.txt")]
+
+
+# --- resilience: a slow or failing IPFS node ---
+# The folder loop talks to the node once per file. Without a timeout a stalled
+# node holds the request open indefinitely; without checking the pin result a
+# file gets registered on-chain while its bytes stay collectable.
+
+def test_every_ipfs_call_carries_a_timeout(client, patch_contract, fake_ipfs, monkeypatch):
+    patch_contract()
+    _no_inherited_sharing(monkeypatch)
+    monkeypatch.setattr(upload, "prepare_upload_batch_transaction", lambda *a: {"tx": "batch"})
+
+    _folder_post(client, [("Docs/a.pdf", "/Docs/a.pdf", b"one")])
+
+    assert fake_ipfs.calls, "expected calls to the node"
+    missing = [url for url, kwargs in fake_ipfs.calls if not kwargs.get("timeout")]
+    assert missing == [], f"these IPFS calls can hang forever: {missing}"
+
+
+def test_folder_upload_skips_a_file_whose_pin_fails(
+        client, patch_contract, fake_ipfs, monkeypatch):
+    patch_contract()
+    _no_inherited_sharing(monkeypatch)
+    monkeypatch.setattr(upload, "prepare_upload_batch_transaction", lambda *a: {"tx": "batch"})
+    fake_ipfs.failing_pins.add(fake_ipfs.cid_for("a.pdf"))
+
+    r = _folder_post(client, [
+        ("Docs/a.pdf", "/Docs/a.pdf", b"one"),
+        ("Docs/b.txt", "/Docs/b.txt", b"two"),
+    ])
+
+    body = r.json()
+    # An unpinned file must never reach the contract — the CID would resolve to
+    # nothing once the node garbage-collects.
+    assert [u["filename"] for u in body["uploaded_files"]] == ["b.txt"]
+    assert [s["filename"] for s in body["skipped_files"]] == ["a.pdf"]

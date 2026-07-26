@@ -196,13 +196,19 @@ class FakeIPFS:
     def __init__(self):
         self.added_names = []   # names as handed to /add
         self.pinned = []
+        self.calls = []         # [(url, kwargs)] — lets tests assert on timeouts
+        self.failing_pins = set()   # cids whose /pin/add answers 500
 
     def cid_for(self, name):
         return "Qmfile" + name.split("/")[-1].replace(".", "")
 
     def post(self, url, files=None, **kwargs):
+        self.calls.append((url, kwargs))
         if "/pin/add" in url:  # must precede the /add check — it contains it
-            self.pinned.append(url.split("arg=")[-1])
+            cid = url.split("arg=")[-1]
+            if cid in self.failing_pins:
+                return FakeIPFSResponse('{"Message":"pin failed"}', status_code=500)
+            self.pinned.append(cid)
             return FakeIPFSResponse("{}")
         if "/add" in url:
             name, _data = files["file"]
@@ -217,11 +223,15 @@ class FakeIPFS:
 
 @pytest.fixture
 def fake_ipfs(monkeypatch):
-    """Swap the `requests` module used by the upload router for a fake node."""
-    import routers.upload as upload
+    """Swap the `requests` module used by the ipfs client for a fake node.
+
+    Both upload paths go through app/ipfs.py, so patching it there covers the
+    single-file and folder endpoints alike.
+    """
+    import ipfs
 
     node = FakeIPFS()
-    monkeypatch.setattr(upload, "requests", node)
+    monkeypatch.setattr(ipfs, "requests", node)
     return node
 
 

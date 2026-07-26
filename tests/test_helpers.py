@@ -295,3 +295,38 @@ def test_unpin_cid_swallows_errors(patch_helpers, monkeypatch):
 
     assert result["unpin_ok"] is False
     assert "node down" in result["error"]
+
+
+# --- common_ancestor_folder ---
+# Inherited sharing hangs off this: it decides which folder's share set the
+# newly uploaded files inherit, so a wrong answer shares files with the wrong
+# people (too deep: nobody; too shallow: everyone above).
+
+class TestCommonAncestorFolder:
+    def test_a_single_file_is_its_own_folder(self):
+        assert helpers.common_ancestor_folder(["/Docs/a.pdf"]) == "Docs"
+
+    def test_siblings_share_their_folder(self):
+        assert helpers.common_ancestor_folder(["/Docs/a.pdf", "/Docs/b.txt"]) == "Docs"
+
+    def test_nested_files_fall_back_to_the_shared_parent(self):
+        assert helpers.common_ancestor_folder(
+            ["/Docs/a.pdf", "/Docs/sub/b.txt"]) == "Docs"
+
+    def test_deep_shared_prefix_is_kept_whole(self):
+        assert helpers.common_ancestor_folder(
+            ["/a/b/c/one.txt", "/a/b/c/two.txt"]) == "a/b/c"
+
+    def test_disjoint_trees_share_nothing(self):
+        assert helpers.common_ancestor_folder(["/Docs/a.pdf", "/Pics/b.png"]) == ""
+
+    def test_a_file_at_the_root_drops_the_ancestor(self):
+        # A root-level file has no folder, so the batch inherits nothing.
+        assert helpers.common_ancestor_folder(["/a.pdf", "/Docs/b.txt"]) == ""
+
+    def test_no_files_no_folder(self):
+        assert helpers.common_ancestor_folder([]) == ""
+
+    def test_a_partial_name_match_is_not_a_shared_folder(self):
+        # "Doc" is not an ancestor of "Docs" — segment-wise, not prefix-wise.
+        assert helpers.common_ancestor_folder(["/Doc/a.pdf", "/Docs/b.txt"]) == ""

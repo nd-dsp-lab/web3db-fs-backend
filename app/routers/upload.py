@@ -1,21 +1,21 @@
 """Uploads: single file and folder (batch) registration on IPFS + contract,
 plus transaction-receipt verification (which unpins on delete/cleanFolder)."""
-import json
 import logging
 from typing import Optional, List
 
-import requests
 from fastapi import APIRouter, UploadFile, Form
 from fastapi.responses import JSONResponse
 
-from configure import IPFS_API_URL, w3, contract
+import ipfs
+from configure import w3, contract
+from constants import ZERO_ADDRESS
 from models import TransactionRequest
 from helpers import (
     prepare_upload_transaction,
     prepare_upload_batch_transaction,
     unpin_cid,
-    folder_share_set,
-    prepare_inherited_grant_transactions,
+    common_ancestor_folder,
+    prepare_inherited_shares,
 )
 
 logger = logging.getLogger(__name__)
@@ -31,20 +31,11 @@ async def upload_file(file: UploadFile, user_address: str = Form(...), folder_pa
     # 1. Add to IPFS unpinned — just to compute the CID. Pinning is deferred
     # until the duplicate check passes, so a rejected duplicate never touches
     # the original owner's pin (unpinning here used to cause GC data loss).
-    resp = requests.post(
-        f"{IPFS_API_URL}/add?pin=false",
-        files={"file": (file.filename, file_data)},
-        stream=True,
-        timeout=10,
-    )
-    resp.raise_for_status()
-    line = resp.raw.readline()
-    resp.close()
-    cid = json.loads(line)["Hash"]
+    cid = ipfs.add_unpinned(file.filename, file_data)
 
     # 2. Early duplicate check — before pinning or building the tx
     existing_owner = contract.functions.getFileOwner(cid).call()
-    if existing_owner != "0x0000000000000000000000000000000000000000":
+    if existing_owner != ZERO_ADDRESS:
         return JSONResponse(status_code=409, content={
             "success": False,
             "reason": "file_already_exists",
@@ -53,7 +44,7 @@ async def upload_file(file: UploadFile, user_address: str = Form(...), folder_pa
         })
 
     # New content — pin it now
-    requests.post(f"{IPFS_API_URL}/pin/add?arg={cid}", timeout=30).raise_for_status()
+    ipfs.pin(cid)
 
     # detecting file format if not given (if none detected, leave empty)
     if file_format is None:
@@ -82,15 +73,7 @@ async def upload_file(file: UploadFile, user_address: str = Form(...), folder_pa
 
     # Inherited folder sharing: if the destination folder is shared, prepare
     # grant txs (one per recipient) for the frontend to sign after the upload
-    share_transactions, auto_shared_with = [], []
-    if folder_path:
-        try:
-            auto_shared_with = folder_share_set(user_address, folder_path)
-            if auto_shared_with:
-                share_transactions = prepare_inherited_grant_transactions([cid], auto_shared_with, user_address)
-        except Exception as e:
-            logger.warning("[upload] inherited share prep failed: %s", e)
-            share_transactions, auto_shared_with = [], []
+    share_transactions, auto_shared_with = prepare_inherited_shares([cid], folder_path, user_address)
 
     return {
         "user": user_address,
@@ -117,8 +100,9 @@ async def upload_folder(
     skipped_files = []
 
     for idx, file in enumerate(files):
-        folder_path = paths[idx] if idx < len(paths) else "/"
-        logger.debug("[%d] Uploading %s to IPFS (folder: %s)", idx, file.filename, folder_path)
+        # The frontend sends the destination path per file, filename included.
+        full_path = paths[idx] if idx < len(paths) else "/"
+        logger.debug("[%d] Uploading %s to IPFS (path: %s)", idx, file.filename, full_path)
 
         # Chrome sends webkitRelativePath as the multipart filename for folder
         # uploads ("Docs/a.pdf"). A slashed name makes `ipfs add` build a
@@ -130,24 +114,10 @@ async def upload_folder(
         # Read file and upload to IPFS
         file_data = await file.read()
         # Add unpinned — pin only after the duplicate checks pass (see /upload)
-        ipfs_response = requests.post(
-            f"{IPFS_API_URL}/add?pin=false",
-            files={"file": (actual_filename, file_data)}
-        )
-        if ipfs_response.status_code != 200:
-            logger.warning("Failed to upload %s to IPFS", file.filename)
-            continue
-        logger.debug("Uploaded %s to IPFS", file.filename)
-        ipfs_response.raise_for_status()
-
-        # Parse only the last JSON object if multiple exist
-        raw_text = ipfs_response.text.strip()
-        last_line = raw_text.splitlines()[-1]
         try:
-            ipfs_json = json.loads(last_line)
-            cid = ipfs_json["Hash"]
+            cid = ipfs.add_unpinned(actual_filename, file_data)
         except Exception as e:
-            logger.error("Error parsing IPFS response: %s | raw: %s", e, raw_text)
+            logger.warning("Failed to upload %s to IPFS: %s", file.filename, e)
             continue
 
         # Skip files whose content already exists on-chain — building the tx
@@ -155,8 +125,8 @@ async def upload_folder(
         try:
             existing_owner = contract.functions.getFileOwner(cid).call()
         except Exception:
-            existing_owner = "0x0000000000000000000000000000000000000000"
-        if existing_owner != "0x0000000000000000000000000000000000000000":
+            existing_owner = ZERO_ADDRESS
+        if existing_owner != ZERO_ADDRESS:
             logger.warning("Skipping %s: CID already owned by %s", actual_filename, existing_owner)
             skipped_files.append({"filename": actual_filename, "cid": cid, "owner": existing_owner})
             continue
@@ -166,13 +136,22 @@ async def upload_folder(
             skipped_files.append({"filename": actual_filename, "cid": cid, "owner": user_address})
             continue
 
-        # Accepted for upload — pin the content now
-        requests.post(f"{IPFS_API_URL}/pin/add?arg={cid}", timeout=30)
+        # Accepted for upload — pin the content now. A file that fails to pin
+        # must not reach the contract: the CID would be registered while the
+        # bytes stay collectable, so it would resolve to nothing after a GC.
+        # One bad file is skipped rather than failing the whole batch.
+        try:
+            ipfs.pin(cid)
+        except Exception as e:
+            logger.error("Skipping %s: pin failed (%s)", actual_filename, e)
+            skipped_files.append({"filename": actual_filename, "cid": cid, "reason": "pin_failed"})
+            continue
+
         file_format = actual_filename.split(".")[-1] if "." in actual_filename else ""
         uploaded_files.append({
             "cid": cid,
-            "filename": actual_filename,  # Use actual_filename here too
-            "folder_path": folder_path,   # already the complete path
+            "filename": actual_filename,   # leaf, for the UI
+            "full_path": full_path,        # path + leaf, what the contract stores
             "file_format": file_format,
         })
 
@@ -183,35 +162,19 @@ async def upload_folder(
         try:
             transaction = prepare_upload_batch_transaction(
                 [u["cid"] for u in uploaded_files],
-                [u["folder_path"] for u in uploaded_files],
+                [u["full_path"] for u in uploaded_files],
                 [u["file_format"] for u in uploaded_files],
                 user_address,
             )
         except Exception as e:
             return JSONResponse(status_code=500, content={"error": f"Batch tx prep failed: {e}"})
 
-    # Inherited folder sharing: derive the drop target as the deepest common
-    # ancestor folder of the batch (entries' folder_path is the full file
-    # path, so drop the filename segment), then grant every new cid to the
-    # folder's share set — one grantFiles tx per recipient.
-    share_transactions, auto_shared_with = [], []
-    if uploaded_files:
-        try:
-            folder_lists = [[p for p in u["folder_path"].split("/") if p][:-1] for u in uploaded_files]
-            common = folder_lists[0]
-            for fl in folder_lists[1:]:
-                n = 0
-                while n < len(common) and n < len(fl) and common[n] == fl[n]:
-                    n += 1
-                common = common[:n]
-            if common:
-                auto_shared_with = folder_share_set(user_address, "/".join(common))
-                if auto_shared_with:
-                    share_transactions = prepare_inherited_grant_transactions(
-                        [u["cid"] for u in uploaded_files], auto_shared_with, user_address)
-        except Exception as e:
-            logger.warning("[upload-folder] inherited share prep failed: %s", e)
-            share_transactions, auto_shared_with = [], []
+    # Inherited folder sharing: the batch's drop target is the deepest folder
+    # every uploaded file sits under, and its share set is what the new files
+    # inherit.
+    drop_target = common_ancestor_folder([u["full_path"] for u in uploaded_files])
+    share_transactions, auto_shared_with = prepare_inherited_shares(
+        [u["cid"] for u in uploaded_files], drop_target, user_address)
 
     return {
         "user": user_address,

@@ -13,6 +13,10 @@ sepolia_chain_id = 11155111
 SHARE_MASK = READ | DOWNLOAD
 
 
+class NotOwnerError(Exception):
+    """The caller does not own the file they asked to act on."""
+
+
 # Price gas 25% above the node's quote. The quote lags the network (and
 # Infura can serve stale reads), which left transactions stuck in the
 # mempool; the margin also lets a retry replace a stuck tx at the same nonce.
@@ -37,10 +41,12 @@ def _base_tx(user_address: str, nonce_offset: int = 0, with_gas_price: bool = Tr
 
 
 # Raise unless user_address owns cid. action is used in the error message.
+# Typed so callers can tell "you don't own this" apart from an RPC failure —
+# both used to surface as a bare Exception, and so as the same 500.
 def _assert_owner(cid: str, user_address: str, action: str):
     owner = contract.functions.getFileOwner(cid).call()
     if owner.lower() != user_address.lower():
-        raise Exception(f"Only file owner can {action} file.")
+        raise NotOwnerError(f"Only file owner can {action} file.")
 
 
 # Filter cids down to the ones user_address owns on-chain.
@@ -147,6 +153,41 @@ def folder_share_set(user_address: str, folder_path: str) -> list[str]:
 # ("Not file owner" / "File already exists" state isn't there) — gas is set
 # manually and the txs are nonce-offset behind the upload tx, which mines
 # first and makes the caller the owner before each grant executes.
+# Deepest folder every one of `full_paths` sits under, as a path without
+# leading slash ("" when they share no folder). The paths are full file paths,
+# so the filename segment is dropped first.
+def common_ancestor_folder(full_paths: list[str]) -> str:
+    if not full_paths:
+        return ""
+    segments = [[p for p in path.split("/") if p][:-1] for path in full_paths]
+    common = segments[0]
+    for segs in segments[1:]:
+        n = 0
+        while n < len(common) and n < len(segs) and common[n] == segs[n]:
+            n += 1
+        common = common[:n]
+    return "/".join(common)
+
+
+# Inherited folder sharing: when the destination folder is already shared, the
+# newly uploaded cids are granted to the same people — one grantFiles tx per
+# recipient, for the frontend to sign after the upload itself.
+#
+# Best-effort by design: the upload has already happened and is worth keeping,
+# so a failure here is logged and returns empty rather than failing the request.
+def prepare_inherited_shares(cids: list[str], folder_path: str, user_address: str):
+    if not cids or not folder_path:
+        return [], []
+    try:
+        recipients = folder_share_set(user_address, folder_path)
+        if not recipients:
+            return [], []
+        return prepare_inherited_grant_transactions(cids, recipients, user_address), recipients
+    except Exception as e:
+        logger.warning("inherited share prep failed for %s: %s", folder_path, e)
+        return [], []
+
+
 def prepare_inherited_grant_transactions(cids: list[str], recipients: list[str], user_address: str, nonce_offset: int = 1):
     user_address = Web3.to_checksum_address(user_address)
     base_nonce = w3.eth.get_transaction_count(user_address)
@@ -280,12 +321,13 @@ def unpin_cid(cid: str):
 
     try:
         # remove pin
-        rm_response = requests.post(f"{IPFS_API_URL}/pin/rm", params={"arg": cid})
+        rm_response = requests.post(f"{IPFS_API_URL}/pin/rm", params={"arg": cid}, timeout=30)
         result["unpin_response"] = {"status_code": rm_response.status_code, "text": rm_response.text}
         result["unpin_ok"] = rm_response.ok
 
-        # trigger garbage collection
-        gc_response = requests.post(f"{IPFS_API_URL}/repo/gc")
+        # trigger garbage collection — sweeps the whole repo, so it is the
+        # slowest call the backend makes and needs the widest budget
+        gc_response = requests.post(f"{IPFS_API_URL}/repo/gc", timeout=300)
         result["gc_response"] = {"status_code": gc_response.status_code, "text": gc_response.text}
         result["gc_ok"] = gc_response.ok
 
