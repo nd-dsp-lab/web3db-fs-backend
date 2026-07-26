@@ -47,7 +47,8 @@ def stub_chain(monkeypatch):
     here, and the contract is covered by test_helpers."""
     monkeypatch.setattr(upload, "prepare_upload_transaction", lambda *a, **k: {"tx": "stub"})
     monkeypatch.setattr(upload, "prepare_upload_batch_transaction", lambda *a, **k: {"tx": "stub"})
-    monkeypatch.setattr(upload, "folder_share_set", lambda *a: [])
+    # Inherited sharing is prepared in helpers now; stub the whole step.
+    monkeypatch.setattr(upload, "prepare_inherited_shares", lambda *a: ([], []))
 
 
 def _unique(prefix=b"%PDF-1.5 "):
