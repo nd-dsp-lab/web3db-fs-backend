@@ -60,28 +60,76 @@ def test_unshare_failure_is_500(client, monkeypatch):
     assert r.status_code == 500
 
 
-def test_shared_users_owner_sees_recipients(client, patch_contract):
+def test_shared_users_owner_sees_recipients(client, patch_contract, auth_token):
     patch_contract(owners={"cidA": OWNER}, shared={"cidA": [RECIPIENT]})
-    r = client.get("/shared-users", params={"cid": "cidA", "user_address": OWNER})
+    r = client.get("/shared-users", params={"cid": "cidA"},
+                   headers={"x-auth-token": auth_token(OWNER)})
     assert r.status_code == 200
     assert r.json() == {"shared_with": [RECIPIENT]}
 
 
-def test_shared_users_non_owner_sees_sharer(client, patch_contract):
+def test_shared_users_non_owner_sees_sharer(client, patch_contract, auth_token):
     patch_contract(owners={"cidA": OWNER})
-    r = client.get("/shared-users", params={"cid": "cidA", "user_address": RECIPIENT})
+    r = client.get("/shared-users", params={"cid": "cidA"},
+                   headers={"x-auth-token": auth_token(RECIPIENT)})
     assert r.json()["shared_by"].lower() == OWNER.lower()
 
 
-def test_shared_users_batch_unions_only_owned(client, patch_contract):
+def test_shared_users_batch_unions_only_owned(client, patch_contract, auth_token):
     # cidA & cidB owned by requester; cidC owned by someone else -> excluded
     patch_contract(
         owners={"cidA": OWNER, "cidB": OWNER, "cidC": RECIPIENT},
         shared={"cidA": [RECIPIENT], "cidB": [RECIPIENT], "cidC": ["0xdead"]},
     )
-    r = client.post("/shared-users-batch", json={"cids": ["cidA", "cidB", "cidC"], "user_address": OWNER})
+    r = client.post("/shared-users-batch",
+                    json={"cids": ["cidA", "cidB", "cidC"], "user_address": OWNER},
+                    headers={"x-auth-token": auth_token(OWNER)})
     assert r.status_code == 200
     assert r.json() == {"shared_with": [RECIPIENT]}
+
+
+# --- the recipient list is private to the owner ---------------------------
+# cids are public (they are on-chain), so identity here has to come from the
+# token. A caller-supplied user_address would let anyone read any owner's
+# sharing graph just by naming their address.
+
+def test_shared_users_without_token_is_401(client, patch_contract):
+    patch_contract(owners={"cidA": OWNER}, shared={"cidA": [RECIPIENT]})
+    r = client.get("/shared-users", params={"cid": "cidA", "user_address": OWNER})
+    assert r.status_code == 401
+    assert "shared_with" not in r.json()
+
+
+def test_shared_users_ignores_a_spoofed_user_address(client, patch_contract, auth_token):
+    # RECIPIENT's token, but claiming to be OWNER in the query string
+    patch_contract(owners={"cidA": OWNER}, shared={"cidA": [RECIPIENT]})
+    r = client.get("/shared-users", params={"cid": "cidA", "user_address": OWNER},
+                   headers={"x-auth-token": auth_token(RECIPIENT)})
+    assert r.status_code == 200
+    assert "shared_with" not in r.json()          # no recipient list leaked
+    assert r.json()["shared_by"].lower() == OWNER.lower()
+
+
+def test_shared_users_batch_without_token_is_401(client, patch_contract):
+    patch_contract(owners={"cidA": OWNER}, shared={"cidA": [RECIPIENT]})
+    r = client.post("/shared-users-batch", json={"cids": ["cidA"], "user_address": OWNER})
+    assert r.status_code == 401
+
+
+def test_shared_users_batch_ignores_a_spoofed_user_address(client, patch_contract, auth_token):
+    patch_contract(owners={"cidA": OWNER}, shared={"cidA": [RECIPIENT]})
+    r = client.post("/shared-users-batch",
+                    json={"cids": ["cidA"], "user_address": OWNER},
+                    headers={"x-auth-token": auth_token(RECIPIENT)})
+    assert r.status_code == 200
+    assert r.json() == {"shared_with": []}        # owns none of the cids
+
+
+def test_shared_users_rejects_an_expired_token(client, patch_contract, auth_token):
+    patch_contract(owners={"cidA": OWNER}, shared={"cidA": [RECIPIENT]})
+    r = client.get("/shared-users", params={"cid": "cidA"},
+                   headers={"x-auth-token": auth_token(OWNER, ttl=-1)})
+    assert r.status_code == 401
 
 
 # --- recipient resolution: which address actually receives the share ---

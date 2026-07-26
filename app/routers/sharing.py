@@ -5,11 +5,12 @@ import logging
 from typing import Optional
 
 import httpx
-from fastapi import APIRouter
+from fastapi import APIRouter, Header
 from fastapi.responses import JSONResponse
 from web3 import Web3
 
 from configure import contract
+from security import verify_auth_token
 from models import (
     ShareRequest,
     UnshareRequest,
@@ -205,14 +206,18 @@ def unshare_file(request: UnshareRequest):
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
+# A file's recipient list is private to its owner, so the requester comes from
+# the auth token, never from a caller-supplied address: cids are public, so a
+# user_address query param would let anyone read any owner's sharing graph.
 @router.get("/shared-users")
-def get_shared_users(cid: str, user_address: str):
+def get_shared_users(cid: str, x_auth_token: Optional[str] = Header(None)):
+    requester = verify_auth_token(x_auth_token or "")
+    if not requester:
+        logger.warning("shared-users denied for %s: missing or invalid auth token", cid)
+        return JSONResponse(status_code=401, content={"error": "Missing or invalid auth token"})
     try:
         owner = contract.functions.getFileOwner(cid).call()
-        shared_user = Web3.to_checksum_address(user_address)
-        owner_checksum = Web3.to_checksum_address(owner)
-
-        if shared_user.lower() == owner_checksum.lower():
+        if owner.lower() == requester.lower():
             shared_users = contract.functions.getSharedUsers(cid).call()
             return {"shared_with": shared_users}
         else:
@@ -223,11 +228,15 @@ def get_shared_users(cid: str, user_address: str):
 
 
 # Folder share modal: union of shared users across every owned cid in the
-# folder (POST because a folder can hold more cids than a query string fits)
+# folder (POST because a folder can hold more cids than a query string fits).
+# request.user_address is ignored — the requester comes from the token.
 @router.post("/shared-users-batch")
-def get_shared_users_batch(request: DeleteBatchRequest):
+def get_shared_users_batch(request: DeleteBatchRequest, x_auth_token: Optional[str] = Header(None)):
+    requester = verify_auth_token(x_auth_token or "")
+    if not requester:
+        logger.warning("shared-users-batch denied: missing or invalid auth token")
+        return JSONResponse(status_code=401, content={"error": "Missing or invalid auth token"})
     try:
-        requester = Web3.to_checksum_address(request.user_address)
         users = set()
         for cid in request.cids:
             owner = contract.functions.getFileOwner(cid).call()
