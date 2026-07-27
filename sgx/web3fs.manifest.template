@@ -21,12 +21,16 @@ loader.log_level = "{{ log_level }}"
 # activation; the app dir rides along so `uvicorn server:app` imports without
 # a chdir.
 {% if provision == "1" %}
-# Unlink before writing: opening an existing encrypted file for write first
-# verifies it, so a corrupted (or tampered-with) old copy would fail the
-# rewrite with EACCES instead of being replaced.
+loader.argv = ["python3", "/web3fs/sgx/provision.py"]
+{% elif tls == "1" %}
+# End-to-end TLS: the session terminates inside the enclave. The key was
+# provisioned into the sealed mount, so no host — the reverse proxy
+# included — can decrypt the traffic; the proxy blind-forwards by SNI.
 loader.argv = [
-  "python3", "-c",
-  "import sys, os; p = '/web3fs/secrets/.env'; os.path.exists(p) and os.remove(p); open(p, 'w').write(sys.stdin.read()); print('sealed', file=sys.stderr)",
+  "python3", "-m", "uvicorn", "server:app",
+  "--host", "{{ host }}", "--port", "{{ port }}",
+  "--ssl-keyfile", "/web3fs/secrets/tls/key.pem",
+  "--ssl-certfile", "/web3fs/secrets/tls/cert.pem",
 ]
 {% else %}
 loader.argv = [
@@ -57,6 +61,7 @@ fs.mounts = [
   { type = "tmpfs", path = "/tmp" },
 
   { path = "/web3fs/app", uri = "file:{{ backend_root }}/app" },
+  { path = "/web3fs/sgx", uri = "file:{{ backend_root }}/sgx" },
   { path = "/web3fs/venv", uri = "file:{{ venv }}" },
   # Encrypted (sealed) storage: transparent AES-GCM per file, key derived
   # from MRSIGNER via SGX sealing — never present on the host. Under
@@ -93,6 +98,7 @@ sgx.trusted_files = [
 {% endfor %}
   "file:{{ venv }}/lib/",
   "file:{{ backend_root }}/app/",
+  "file:{{ backend_root }}/sgx/provision.py",
 ]
 
 # Mutable or host-managed files the enclave reads/writes without integrity

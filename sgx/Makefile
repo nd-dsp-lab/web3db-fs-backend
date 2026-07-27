@@ -12,6 +12,7 @@
 #   BACKEND_ROOT  checkout to serve (default: parent of this dir)
 #   VENV          virtualenv with the app's dependencies
 #   HOST/PORT     uvicorn bind (default 127.0.0.1:8091)
+#   TLS=1         serve HTTPS with the key/cert sealed at secrets/tls/
 
 ARCH_LIBDIR ?= /lib/$(shell $(CC) -dumpmachine)
 BACKEND_ROOT ?= $(abspath ..)
@@ -20,6 +21,7 @@ ENTRYPOINT ?= $(shell realpath $$(command -v python3))
 HOST ?= 127.0.0.1
 PORT ?= 8091
 LOG_LEVEL ?= error
+TLS ?= 0
 
 .PHONY: all direct clean
 all: web3fs.manifest.sgx provision.manifest.sgx
@@ -40,6 +42,7 @@ web3fs.manifest provision.manifest: web3fs.manifest.template
 		-Dhost=$(HOST) \
 		-Dport=$(PORT) \
 		-Dprovision=$(PROVISION) \
+		-Dtls=$(TLS) \
 		$< $@
 
 # Also emits the .sig (SIGSTRUCT) — its MRENCLAVE is the measurement that
