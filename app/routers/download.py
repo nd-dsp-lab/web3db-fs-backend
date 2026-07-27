@@ -10,6 +10,7 @@ from fastapi import APIRouter, Header
 from fastapi.responses import Response, FileResponse, JSONResponse
 from web3 import Web3
 
+import filecrypto
 from configure import IPFS_GATEWAY_URL, contract
 from security import verify_auth_token, can_download, require_download_access
 
@@ -35,11 +36,16 @@ async def download_file_with_name(cid: str, filename: str, x_auth_token: Optiona
         if response.status_code != 200:
             raise Exception(f"Failed to fetch file from IPFS: {response.status_code}")
 
+        # Sealed uploads decrypt here, after the permission check; legacy
+        # plaintext files pass through. A tampered ciphertext raises and
+        # lands in the 502 below rather than serving garbage.
+        content = filecrypto.maybe_decrypt(response.content)
+
         # Return the full bytes with an explicit Content-Length (not a chunked
         # StreamingResponse): the reverse proxy speaks HTTP/1.0, where chunked
         # transfer-encoding is invalid, which broke PDF preview through it.
         return Response(
-            content=response.content,
+            content=content,
             media_type="application/octet-stream",
             headers={"Content-Disposition": f"attachment; filename={filename}"}
         )
@@ -87,7 +93,11 @@ async def download_folder_zip(path: str, x_auth_token: Optional[str] = Header(No
             for cid, rel in entries:
                 response = await client.get(f"{IPFS_GATEWAY_URL}/{cid}")
                 if response.status_code == 200:
-                    zf.writestr(f"{folder_name}/{rel}", response.content)
+                    try:
+                        zf.writestr(f"{folder_name}/{rel}", filecrypto.maybe_decrypt(response.content))
+                    except ValueError:
+                        # One tampered file shouldn't sink the whole zip
+                        logger.warning("download-folder: skipping %s (%s), ciphertext failed verification", cid, rel)
                 else:
                     logger.warning("download-folder: skipping %s (%s), gateway %s", cid, rel, response.status_code)
     return Response(
@@ -149,7 +159,9 @@ async def get_thumbnail(cid: str, x_auth_token: Optional[str] = Header(None)):
             if response.status_code != 200:
                 return JSONResponse(status_code=404, content={"error": "File not found on IPFS"})
 
-            content = response.content
+            # Decrypt before sniffing the type — sealed bytes all look alike.
+            # A verification failure raises into the except below -> 404.
+            content = filecrypto.maybe_decrypt(response.content)
             if content[:5] == b"%PDF-":
                 # First page of a PDF, rendered via PyMuPDF
                 import fitz

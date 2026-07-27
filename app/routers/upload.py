@@ -6,6 +6,7 @@ from typing import Optional, List
 from fastapi import APIRouter, UploadFile, Form
 from fastapi.responses import JSONResponse
 
+import filecrypto
 import ipfs
 from configure import w3, contract
 from constants import ZERO_ADDRESS
@@ -44,7 +45,10 @@ def _released_cids(func_name: str, func_params: dict) -> list:
 # Register the file to ipfs and get a cid
 @router.post("/upload")
 async def upload_file(file: UploadFile, user_address: str = Form(...), folder_path: str = Form(""), file_format: Optional[str] = None):
-    file_data = await file.read()
+    # Sealed before IPFS ever sees it: the node stores only ciphertext, and
+    # the CID (computed below) addresses the ciphertext. Encryption is
+    # deterministic, so the duplicate checks still catch identical content.
+    file_data = filecrypto.encrypt(await file.read())
 
     # 1. Add to IPFS unpinned — just to compute the CID. Pinning is deferred
     # until the duplicate check passes, so a rejected duplicate never touches
@@ -129,8 +133,8 @@ async def upload_folder(
         # add under the leaf name.
         actual_filename = file.filename.split('/')[-1]
 
-        # Read file and upload to IPFS
-        file_data = await file.read()
+        # Read, seal (see /upload), and add to IPFS
+        file_data = filecrypto.encrypt(await file.read())
         # Add unpinned — pin only after the duplicate checks pass (see /upload)
         try:
             cid = ipfs.add_unpinned(actual_filename, file_data)

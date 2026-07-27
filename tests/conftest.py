@@ -8,11 +8,16 @@ the suite is hermetic and never touches the real .env, IPFS, or Sepolia.
 import json
 import os
 import sys
+import tempfile
 import time
 from types import SimpleNamespace
 
 # --- hermetic environment (must precede app imports) ---
 os.environ.setdefault("AUTH_SECRET", "00" * 32)
+# filecrypto auto-generates its master key at this path on first use; point
+# it at a temp dir so the suite never touches (or creates) real secrets/.
+os.environ.setdefault(
+    "FILE_KEY_FILE", os.path.join(tempfile.mkdtemp(prefix="w3fs-test-keys-"), "file_master_key"))
 os.environ.setdefault("CONTRACT_ADDRESS", "0x463FA1e9cF1f7f8b1b450708773aBa8BaBBe86AF")
 os.environ.setdefault("INFURA_URL", "http://localhost:9")  # unreachable on purpose
 os.environ.setdefault("LOG_LEVEL", "WARNING")

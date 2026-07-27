@@ -65,7 +65,10 @@ fs.mounts = [
   { type = "encrypted", path = "/web3fs/secrets", uri = "file:{{ backend_root }}/secrets", key_name = "_sgx_mrsigner" },
   { path = "/web3fs/funded_addresses.json", uri = "file:{{ backend_root }}/funded_addresses.json" },
   { path = "/web3fs/logs", uri = "file:{{ backend_root }}/logs" },
-  { path = "/web3fs/thumbs", uri = "file:{{ backend_root }}/thumbs" },
+  # Thumbnails are decrypted previews of sealed files, so their cache is
+  # sealed too. Fresh host dir (not thumbs/): an encrypted mount can't read
+  # pre-existing plaintext files, they'd 500 on open.
+  { type = "encrypted", path = "/web3fs/thumbs", uri = "file:{{ backend_root }}/thumbs-sealed", key_name = "_sgx_mrsigner" },
 ]
 
 # Sapphire Rapids: EDMM adds EPC pages on demand instead of pre-faulting the
@@ -106,5 +109,4 @@ sgx.allowed_files = [
   "file:/usr/lib/ssl/",
   "file:{{ backend_root }}/funded_addresses.json",
   "file:{{ backend_root }}/logs/",
-  "file:{{ backend_root }}/thumbs/",
 ]

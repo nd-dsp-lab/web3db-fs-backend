@@ -47,3 +47,4 @@ coverage/
 funded_addresses.json
 thumbs/
 auth_secret.txt
+secrets/
