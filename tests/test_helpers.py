@@ -264,37 +264,83 @@ def test_folder_share_set_unshared_folder_is_empty(patch_helpers):
 
 # --- unpin ---
 
-def test_unpin_cid_reports_both_steps(patch_helpers, monkeypatch):
+class R:
+    def __init__(self, ok=True):
+        self.status_code = 200 if ok else 500
+        self.text = "ok"
+        self.ok = ok
+
+
+@pytest.fixture
+def record_node(monkeypatch):
+    """Record every call the unpin path makes to the node."""
     calls = []
 
-    class R:
-        def __init__(self, ok=True):
-            self.status_code = 200 if ok else 500
-            self.text = "ok"
-            self.ok = ok
-
     def fake_post(url, **kw):
-        calls.append(url)
+        calls.append((url, kw))
         return R()
 
     monkeypatch.setattr(helpers, "requests", type("M", (), {"post": staticmethod(fake_post)}))
-    result = helpers.unpin_cid("cidA")
-
-    assert result["unpin_ok"] and result["gc_ok"]
-    assert any("/pin/rm" in u for u in calls) and any("/repo/gc" in u for u in calls)
+    return calls
 
 
-def test_unpin_cid_swallows_errors(patch_helpers, monkeypatch):
+def test_unpin_reports_both_steps(record_node):
+    result = helpers.unpin_cids(["cidA"])
+
+    assert result["unpins"][0]["unpin_ok"] and result["gc_ok"]
+    urls = [u for u, _ in record_node]
+    assert any("/pin/rm" in u for u in urls) and any("/repo/gc" in u for u in urls)
+
+
+def test_unpin_collects_garbage_once_for_the_whole_batch(record_node):
+    # GC sweeps the entire repo, so its cost is the same for one pin or a
+    # hundred. Running it per cid made a folder delete do N full sweeps back to
+    # back inside a single request — with a 300s budget each, the endpoint
+    # simply stopped returning on a large repo.
+    helpers.unpin_cids(["c1", "c2", "c3"])
+
+    urls = [u for u, _ in record_node]
+    assert sum("/pin/rm" in u for u in urls) == 3
+    assert sum("/repo/gc" in u for u in urls) == 1
+
+
+def test_unpin_reports_each_cid_separately(record_node):
+    result = helpers.unpin_cids(["c1", "c2"])
+    assert [u["cid"] for u in result["unpins"]] == ["c1", "c2"]
+
+
+def test_unpin_of_nothing_skips_the_node_entirely(record_node):
+    # Nothing was released, so there is nothing for a sweep to collect.
+    assert helpers.unpin_cids([])["unpins"] == []
+    assert record_node == []
+
+
+def test_unpin_swallows_errors(monkeypatch):
     # Unpinning is best-effort cleanup after a confirmed on-chain delete; it
     # must never turn a successful delete into a failed request.
     def boom(url, **kw):
         raise RuntimeError("node down")
 
     monkeypatch.setattr(helpers, "requests", type("M", (), {"post": staticmethod(boom)}))
-    result = helpers.unpin_cid("cidA")
+    result = helpers.unpin_cids(["cidA"])
 
-    assert result["unpin_ok"] is False
+    assert result["unpins"][0]["unpin_ok"] is False
+    assert "node down" in result["unpins"][0]["error"]
     assert "node down" in result["error"]
+
+
+def test_one_bad_cid_does_not_stop_the_rest(monkeypatch):
+    def flaky(url, **kw):
+        if kw.get("params", {}).get("arg") == "bad":
+            raise RuntimeError("node down")
+        return R()
+
+    monkeypatch.setattr(helpers, "requests", type("M", (), {"post": staticmethod(flaky)}))
+    result = helpers.unpin_cids(["bad", "good"])
+
+    assert result["unpins"][0]["unpin_ok"] is False
+    assert result["unpins"][1]["unpin_ok"] is True
+    assert result["gc_ok"] is True
 
 
 # --- common_ancestor_folder ---

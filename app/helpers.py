@@ -148,11 +148,6 @@ def folder_share_set(user_address: str, folder_path: str) -> list[str]:
     return []
 
 
-# Grants for files being uploaded in the same nonce sequence. The files don't
-# exist on-chain yet, so ownership checks and gas estimation would both fail
-# ("Not file owner" / "File already exists" state isn't there) — gas is set
-# manually and the txs are nonce-offset behind the upload tx, which mines
-# first and makes the caller the owner before each grant executes.
 # Deepest folder every one of `full_paths` sits under, as a path without
 # leading slash ("" when they share no folder). The paths are full file paths,
 # so the filename segment is dropped first.
@@ -188,6 +183,11 @@ def prepare_inherited_shares(cids: list[str], folder_path: str, user_address: st
         return [], []
 
 
+# Grants for files being uploaded in the same nonce sequence. The files don't
+# exist on-chain yet, so ownership checks and gas estimation would both fail
+# ("Not file owner" / "File already exists" state isn't there) — gas is set
+# manually and the txs are nonce-offset behind the upload tx, which mines
+# first and makes the caller the owner before each grant executes.
 def prepare_inherited_grant_transactions(cids: list[str], recipients: list[str], user_address: str, nonce_offset: int = 1):
     user_address = Web3.to_checksum_address(user_address)
     base_nonce = w3.eth.get_transaction_count(user_address)
@@ -315,23 +315,42 @@ def prepare_delete_folder(cids: list[str], user_address: str):
         raise
 
 
-# helper to unpin cid and trigger garbage collection on local IPFS node
-def unpin_cid(cid: str):
-    result = {"cid": cid, "unpin_ok": False, "unpin_response": None, "gc_ok": False, "gc_response": None}
+PIN_RM_TIMEOUT = 30
+# GC sweeps the whole repo, so it is the slowest call the backend makes and
+# needs the widest budget.
+GC_TIMEOUT = 300
+
+
+# Release the bytes behind cids on the local node: drop every pin, then collect
+# garbage once. The sweep costs the same whether one pin was dropped or a
+# hundred, so it belongs outside the loop — running it per cid made a folder
+# delete perform N full sweeps back to back inside a single request.
+# Best-effort: this runs after the on-chain delete is already mined, so a node
+# problem is reported, never raised.
+def unpin_cids(cids: list[str]):
+    result = {"unpins": [], "gc_ok": False, "gc_response": None}
+    if not cids:
+        return result  # nothing released, so nothing for a sweep to collect
+
+    for cid in cids:
+        entry = {"cid": cid, "unpin_ok": False, "unpin_response": None}
+        try:
+            rm = requests.post(f"{IPFS_API_URL}/pin/rm", params={"arg": cid},
+                               timeout=PIN_RM_TIMEOUT)
+            entry["unpin_response"] = {"status_code": rm.status_code, "text": rm.text}
+            entry["unpin_ok"] = rm.ok
+        except Exception as e:
+            # One unreachable cid must not strand the pins after it.
+            logger.warning("unpin failed for %s: %s", cid, e)
+            entry["error"] = str(e)
+        result["unpins"].append(entry)
 
     try:
-        # remove pin
-        rm_response = requests.post(f"{IPFS_API_URL}/pin/rm", params={"arg": cid}, timeout=30)
-        result["unpin_response"] = {"status_code": rm_response.status_code, "text": rm_response.text}
-        result["unpin_ok"] = rm_response.ok
-
-        # trigger garbage collection — sweeps the whole repo, so it is the
-        # slowest call the backend makes and needs the widest budget
-        gc_response = requests.post(f"{IPFS_API_URL}/repo/gc", timeout=300)
-        result["gc_response"] = {"status_code": gc_response.status_code, "text": gc_response.text}
-        result["gc_ok"] = gc_response.ok
-
+        gc = requests.post(f"{IPFS_API_URL}/repo/gc", timeout=GC_TIMEOUT)
+        result["gc_response"] = {"status_code": gc.status_code, "text": gc.text}
+        result["gc_ok"] = gc.ok
     except Exception as e:
+        logger.warning("repo gc failed: %s", e)
         result["error"] = str(e)
 
     return result

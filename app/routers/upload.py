@@ -13,7 +13,7 @@ from models import TransactionRequest
 from helpers import (
     prepare_upload_transaction,
     prepare_upload_batch_transaction,
-    unpin_cid,
+    unpin_cids,
     common_ancestor_folder,
     prepare_inherited_shares,
 )
@@ -21,6 +21,24 @@ from helpers import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# Contract calls that end a file's life on-chain, and so free the local node to
+# drop its pins. Everything else leaves the pinset alone.
+RELEASING_FUNCTIONS = ("deleteFile", "cleanFolder")
+
+
+def _released_cids(func_name: str, func_params: dict) -> list:
+    """The CIDs a mined delete releases, read out of its decoded arguments.
+
+    Solidity argument names have varied across contract revisions, hence the
+    fallbacks; an unrecognised shape yields nothing rather than guessing.
+    """
+    if func_name == "deleteFile":
+        cid = func_params.get("cid") or func_params.get("_cid")
+        return [cid] if cid else []
+    if func_name == "cleanFolder":
+        return list(func_params.get("cids") or [])
+    return []
 
 
 # Register the file to ipfs and get a cid
@@ -211,28 +229,17 @@ def verify_upload(request: TransactionRequest):
             func_name = func_obj.fn_name if hasattr(func_obj, 'fn_name') else func_obj.function_identifier
             response_payload["decoded_function"] = {"name": func_name, "args": func_params}
 
-            # TODO: Make this a helper function (unpin_file(...) or something)
-            # if it's a deleteFile call and tx succeeded -> unpin cid from local IPFS
-            if func_name == "deleteFile" and receipt.status == 1:
-                cid_unpin = func_params.get("cid") or func_params.get("_cid") or None
-                if cid_unpin:
-                    logger.info("Detected deleteFile for cid %s - unpinning from local IPFS node", cid_unpin)
-                    unpin_result = unpin_cid(cid_unpin)
-                    response_payload["unpin_result"] = unpin_result
+            # A mined delete is the point at which the bytes stop being ours to
+            # keep, so that is where the local node releases them.
+            if receipt.status == 1 and func_name in RELEASING_FUNCTIONS:
+                cids = _released_cids(func_name, func_params)
+                if cids:
+                    logger.info("%s mined — releasing %d cid(s) from the local node",
+                                func_name, len(cids))
+                    response_payload["unpin_result"] = unpin_cids(cids)
                 else:
-                    response_payload["unpin_result"] = {"error": "Could not find cid in tx params"}
-            elif func_name == "cleanFolder" and receipt.status == 1:
-                    cids_to_unpin = func_params.get("cids")
-                    if cids_to_unpin:
-                        logger.info("Found %d CIDs to unpin", len(cids_to_unpin))
-                        results = []
-                        for cid in cids_to_unpin:
-                            logger.debug("Unpinning: %s", cid)
-                            res = unpin_cid(cid)
-                            results.append({"cid": cid, "result": res})
-                    else:
-                        logger.warning("cleanFolder transaction found, but CIDs list was empty")
-                        response_payload["unpin_result"] = {"warning": "Empty CID list"}
+                    logger.warning("%s mined but named no CIDs to release", func_name)
+                    response_payload["unpin_result"] = {"warning": "Empty CID list"}
         except Exception as e:
             logger.warning("Couldn't decode tx input for unpin: %s", e)
             response_payload["decoded_function_error"] = str(e)

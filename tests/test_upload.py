@@ -1,4 +1,6 @@
 """Upload endpoints: single file, folder batch, and the CID the batch stores."""
+from types import SimpleNamespace
+
 import helpers
 import routers.upload as upload
 
@@ -209,3 +211,86 @@ def test_folder_upload_skips_a_file_whose_pin_fails(
     # nothing once the node garbage-collects.
     assert [u["filename"] for u in body["uploaded_files"]] == ["b.txt"]
     assert [s["filename"] for s in body["skipped_files"]] == ["a.pdf"]
+
+
+# --- /verify-upload: releasing pinned bytes after a mined delete ---
+# The unpin step runs only here, after the chain has confirmed the delete. If
+# it silently does nothing the files stay pinned forever and the node's disk
+# never comes back; if its result never reaches the response, nobody can tell.
+
+def _stub_receipt(monkeypatch, func_name, func_params, status=1):
+    """Make verify_upload see a mined tx decoding to func_name(func_params)."""
+    receipt = SimpleNamespace(blockNumber=1, gasUsed=21000, status=status)
+    eth = SimpleNamespace(
+        wait_for_transaction_receipt=lambda *a, **k: receipt,
+        get_transaction=lambda h: SimpleNamespace(input="0x"),
+    )
+    monkeypatch.setattr(upload, "w3", SimpleNamespace(eth=eth))
+    monkeypatch.setattr(upload.contract, "decode_function_input",
+                        lambda data: (SimpleNamespace(fn_name=func_name), func_params),
+                        raising=False)
+
+    released = []
+    monkeypatch.setattr(upload, "unpin_cids",
+                        lambda cids: released.append(list(cids)) or {"unpins": [], "gc_ok": True})
+    return released
+
+
+def _verify(client):
+    return client.post("/verify-upload", json={"tx_hash": "0xabc"})
+
+
+def test_folder_delete_releases_every_cid_and_reports_it(client, patch_contract, monkeypatch):
+    patch_contract()
+    released = _stub_receipt(monkeypatch, "cleanFolder", {"cids": ["c1", "c2", "c3"]})
+
+    body = _verify(client).json()
+
+    assert released == [["c1", "c2", "c3"]]
+    # The result used to be computed and then dropped on the floor, so a folder
+    # delete answered as though no unpinning had happened at all.
+    assert body["unpin_result"]["gc_ok"] is True
+
+
+def test_single_delete_releases_its_cid(client, patch_contract, monkeypatch):
+    patch_contract()
+    released = _stub_receipt(monkeypatch, "deleteFile", {"cid": "c1"})
+
+    body = _verify(client).json()
+
+    assert released == [["c1"]]
+    assert "unpin_result" in body
+
+
+def test_a_reverted_delete_releases_nothing(client, patch_contract, monkeypatch):
+    # status=0 means the chain rejected the delete: the file still exists on
+    # chain, so dropping its pin would strand a live entry.
+    # patch_contract must come first — it installs a fresh fake contract, which
+    # would otherwise discard the decode_function_input stub and make this pass
+    # for the wrong reason (decoding throws, so nothing is released anyway).
+    patch_contract()
+    released = _stub_receipt(monkeypatch, "cleanFolder", {"cids": ["c1"]}, status=0)
+
+    body = _verify(client).json()
+
+    assert released == []
+    assert "unpin_result" not in body
+
+
+def test_an_upload_releases_nothing(client, patch_contract, monkeypatch):
+    patch_contract()
+    released = _stub_receipt(monkeypatch, "uploadFile", {"cid": "c1"})
+
+    _verify(client)
+
+    assert released == []
+
+
+def test_a_delete_naming_no_cids_is_reported_not_silent(client, patch_contract, monkeypatch):
+    patch_contract()
+    released = _stub_receipt(monkeypatch, "cleanFolder", {"cids": []})
+
+    body = _verify(client).json()
+
+    assert released == []
+    assert body["unpin_result"] == {"warning": "Empty CID list"}
