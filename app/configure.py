@@ -12,8 +12,10 @@ from logging_config import setup_logging
 setup_logging()
 logger = logging.getLogger(__name__)
 
-# Load environment variables from .env file in web3db-fs-backend folder
-env_path = os.path.join(os.path.dirname(__file__), '..', '.env')
+# Load environment variables from .env file in web3db-fs-backend folder.
+# ENV_FILE overrides the location; the SGX manifest points it at the sealed
+# copy inside the enclave's encrypted mount.
+env_path = os.getenv("ENV_FILE") or os.path.join(os.path.dirname(__file__), '..', '.env')
 load_dotenv(dotenv_path=env_path)
 
 # Browser origins allowed to call this API. Extra origins (preview builds,

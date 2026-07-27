@@ -22,10 +22,15 @@ PORT ?= 8091
 LOG_LEVEL ?= error
 
 .PHONY: all direct clean
-all: web3fs.manifest.sgx
+all: web3fs.manifest.sgx provision.manifest.sgx
 direct: web3fs.manifest
 
-web3fs.manifest: web3fs.manifest.template
+# The server enclave and — rendered from the same template with provision=1 —
+# a one-shot enclave that seals a plaintext .env from stdin into the
+# encrypted mount:  cat .env | gramine-sgx provision
+web3fs.manifest: PROVISION = 0
+provision.manifest: PROVISION = 1
+web3fs.manifest provision.manifest: web3fs.manifest.template
 	gramine-manifest \
 		-Dlog_level=$(LOG_LEVEL) \
 		-Darch_libdir=$(ARCH_LIBDIR) \
@@ -34,12 +39,15 @@ web3fs.manifest: web3fs.manifest.template
 		-Dvenv=$(VENV) \
 		-Dhost=$(HOST) \
 		-Dport=$(PORT) \
+		-Dprovision=$(PROVISION) \
 		$< $@
 
-# Also emits web3fs.sig (SIGSTRUCT) — its MRENCLAVE is the measurement that
-# attestation verifies against in phase 5.
-web3fs.manifest.sgx: web3fs.manifest
+# Also emits the .sig (SIGSTRUCT) — its MRENCLAVE is the measurement that
+# attestation verifies against in phase 5. Both enclaves carry the same
+# MRSIGNER, which is what lets the provision tool write what the server
+# later unseals.
+%.manifest.sgx: %.manifest
 	gramine-sgx-sign --manifest $< --output $@
 
 clean:
-	rm -f web3fs.manifest web3fs.manifest.sgx web3fs.sig
+	rm -f web3fs.manifest provision.manifest *.manifest.sgx *.sig

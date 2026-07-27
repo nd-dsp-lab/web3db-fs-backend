@@ -5,10 +5,12 @@
 # checkout lives on the host, so every relative path in the code (../.env,
 # ../../thumbs, ...) resolves the same way it does under plain python.
 #
-# Phase 1 scope: get the unmodified backend running inside an enclave.
-# Secrets (.env) are still plain host files listed under allowed_files —
-# moving them to sealed encrypted mounts is phase 2, and TLS-in-enclave with
-# attestation is phases 4-5.
+# Secrets (.env) live in the encrypted mount at /web3fs/secrets: bytes on the
+# host disk are ciphertext under a key derived from SGX sealing (MRSIGNER —
+# only enclaves signed with our enclave key can derive it). The same template
+# renders two enclaves: the server, and with provision=1 a one-shot tool that
+# reads a plaintext .env on stdin and writes it into the sealed mount.
+# TLS-in-enclave and attestation are phases 4-5.
 
 libos.entrypoint = "{{ entrypoint }}"
 
@@ -18,10 +20,20 @@ loader.log_level = "{{ log_level }}"
 # wants the real ELF binary. The venv is applied via PYTHONPATH instead of
 # activation; the app dir rides along so `uvicorn server:app` imports without
 # a chdir.
+{% if provision == "1" %}
+# Unlink before writing: opening an existing encrypted file for write first
+# verifies it, so a corrupted (or tampered-with) old copy would fail the
+# rewrite with EACCES instead of being replaced.
+loader.argv = [
+  "python3", "-c",
+  "import sys, os; p = '/web3fs/secrets/.env'; os.path.exists(p) and os.remove(p); open(p, 'w').write(sys.stdin.read()); print('sealed', file=sys.stderr)",
+]
+{% else %}
 loader.argv = [
   "python3", "-m", "uvicorn", "server:app",
   "--host", "{{ host }}", "--port", "{{ port }}",
 ]
+{% endif %}
 
 loader.env.LD_LIBRARY_PATH = "/lib:{{ arch_libdir }}:/usr/lib:/usr/{{ arch_libdir }}"
 loader.env.PATH = "/usr/bin:/bin"
@@ -30,6 +42,8 @@ loader.env.PYTHONPATH = "/web3fs/app:/web3fs/venv/lib/python3.12/site-packages"
 # The app dirs are measured read-only mounts; a .pyc write would fail anyway,
 # so tell CPython not to try.
 loader.env.PYTHONDONTWRITEBYTECODE = "1"
+# configure.py loads its settings from the sealed copy, not a host file.
+loader.env.ENV_FILE = "/web3fs/secrets/.env"
 
 # Host env is NOT passed through (that would let the host operator inject
 # e.g. a hostile INFURA_URL). All configuration comes from the .env file the
@@ -44,7 +58,11 @@ fs.mounts = [
 
   { path = "/web3fs/app", uri = "file:{{ backend_root }}/app" },
   { path = "/web3fs/venv", uri = "file:{{ venv }}" },
-  { path = "/web3fs/.env", uri = "file:{{ backend_root }}/.env" },
+  # Encrypted (sealed) storage: transparent AES-GCM per file, key derived
+  # from MRSIGNER via SGX sealing — never present on the host. Under
+  # gramine-direct the key is an insecure all-zero stub, so dev runs work
+  # but seal nothing.
+  { type = "encrypted", path = "/web3fs/secrets", uri = "file:{{ backend_root }}/secrets", key_name = "_sgx_mrsigner" },
   { path = "/web3fs/funded_addresses.json", uri = "file:{{ backend_root }}/funded_addresses.json" },
   { path = "/web3fs/logs", uri = "file:{{ backend_root }}/logs" },
   { path = "/web3fs/thumbs", uri = "file:{{ backend_root }}/thumbs" },
@@ -75,7 +93,8 @@ sgx.trusted_files = [
 ]
 
 # Mutable or host-managed files the enclave reads/writes without integrity
-# protection. Phase 2 moves .env and the write paths to encrypted mounts.
+# protection. Secrets are NOT here anymore — they ride the encrypted mount.
+# thumbs/ and logs/ stay plain until phase 3 decides what leaks through them.
 sgx.allowed_files = [
   "file:/etc/resolv.conf",
   "file:/etc/hosts",
@@ -85,7 +104,6 @@ sgx.allowed_files = [
   "file:/etc/ssl/",
   "file:/etc/ca-certificates/",
   "file:/usr/lib/ssl/",
-  "file:{{ backend_root }}/.env",
   "file:{{ backend_root }}/funded_addresses.json",
   "file:{{ backend_root }}/logs/",
   "file:{{ backend_root }}/thumbs/",
