@@ -1,0 +1,92 @@
+# Gramine manifest for running the Web3FS backend inside an SGX enclave.
+#
+# Rendered by `make` (see Makefile here) with the paths of the checkout and
+# venv baked in. The app sees a clean /web3fs prefix regardless of where the
+# checkout lives on the host, so every relative path in the code (../.env,
+# ../../thumbs, ...) resolves the same way it does under plain python.
+#
+# Phase 1 scope: get the unmodified backend running inside an enclave.
+# Secrets (.env) are still plain host files listed under allowed_files —
+# moving them to sealed encrypted mounts is phase 2, and TLS-in-enclave with
+# attestation is phases 4-5.
+
+libos.entrypoint = "{{ entrypoint }}"
+
+loader.log_level = "{{ log_level }}"
+
+# The entrypoint is the system python, not venv/bin/python3, because Gramine
+# wants the real ELF binary. The venv is applied via PYTHONPATH instead of
+# activation; the app dir rides along so `uvicorn server:app` imports without
+# a chdir.
+loader.argv = [
+  "python3", "-m", "uvicorn", "server:app",
+  "--host", "{{ host }}", "--port", "{{ port }}",
+]
+
+loader.env.LD_LIBRARY_PATH = "/lib:{{ arch_libdir }}:/usr/lib:/usr/{{ arch_libdir }}"
+loader.env.PATH = "/usr/bin:/bin"
+loader.env.HOME = "/web3fs"
+loader.env.PYTHONPATH = "/web3fs/app:/web3fs/venv/lib/python3.12/site-packages"
+# The app dirs are measured read-only mounts; a .pyc write would fail anyway,
+# so tell CPython not to try.
+loader.env.PYTHONDONTWRITEBYTECODE = "1"
+
+# Host env is NOT passed through (that would let the host operator inject
+# e.g. a hostile INFURA_URL). All configuration comes from the .env file the
+# app already loads itself.
+
+fs.mounts = [
+  { path = "/lib", uri = "file:{{ gramine.runtimedir() }}" },
+  { path = "{{ arch_libdir }}", uri = "file:{{ arch_libdir }}" },
+  { path = "/usr", uri = "file:/usr" },
+  { path = "/etc", uri = "file:/etc" },
+  { type = "tmpfs", path = "/tmp" },
+
+  { path = "/web3fs/app", uri = "file:{{ backend_root }}/app" },
+  { path = "/web3fs/venv", uri = "file:{{ venv }}" },
+  { path = "/web3fs/.env", uri = "file:{{ backend_root }}/.env" },
+  { path = "/web3fs/funded_addresses.json", uri = "file:{{ backend_root }}/funded_addresses.json" },
+  { path = "/web3fs/logs", uri = "file:{{ backend_root }}/logs" },
+  { path = "/web3fs/thumbs", uri = "file:{{ backend_root }}/thumbs" },
+]
+
+# Sapphire Rapids: EDMM adds EPC pages on demand instead of pre-faulting the
+# whole enclave_size at startup, so a generous size costs nothing.
+sgx.edmm_enable = true
+sgx.enclave_size = "8G"
+# uvicorn's event loop plus anyio's default 40-thread pool plus headroom.
+sgx.max_threads = 128
+
+# Let `kill`/restart.sh stop the server cleanly from outside the enclave.
+sys.enable_sigterm_injection = true
+
+# Everything the interpreter may execute or import is measured: a tampered
+# library fails its hash check at open() instead of running.
+sgx.trusted_files = [
+  "file:{{ entrypoint }}",
+  "file:{{ gramine.runtimedir() }}/",
+  "file:{{ arch_libdir }}/",
+  "file:/usr/{{ arch_libdir }}/",
+{% for path in python.get_sys_path(entrypoint) %}
+  "file:{{ path }}{{ '/' if path.is_dir() else '' }}",
+{% endfor %}
+  "file:{{ venv }}/lib/",
+  "file:{{ backend_root }}/app/",
+]
+
+# Mutable or host-managed files the enclave reads/writes without integrity
+# protection. Phase 2 moves .env and the write paths to encrypted mounts.
+sgx.allowed_files = [
+  "file:/etc/resolv.conf",
+  "file:/etc/hosts",
+  "file:/etc/host.conf",
+  "file:/etc/nsswitch.conf",
+  "file:/etc/localtime",
+  "file:/etc/ssl/",
+  "file:/etc/ca-certificates/",
+  "file:/usr/lib/ssl/",
+  "file:{{ backend_root }}/.env",
+  "file:{{ backend_root }}/funded_addresses.json",
+  "file:{{ backend_root }}/logs/",
+  "file:{{ backend_root }}/thumbs/",
+]
