@@ -23,9 +23,18 @@ PORT ?= 8091
 LOG_LEVEL ?= error
 TLS ?= 0
 EXPORT ?= 0
+SLOT ?= a
 
-.PHONY: all direct clean
+# Blue/green slots: identical enclaves differing only in listen port and
+# thumbnail cache, so a deploy can boot the idle one before retiring the
+# live one. Slot a keeps 8090 (the port the reverse tunnel has always
+# forwarded); slot b uses 8092.
+SLOT_A_PORT ?= 8090
+SLOT_B_PORT ?= 8092
+
+.PHONY: all slots direct clean
 all: web3fs.manifest.sgx provision.manifest.sgx
+slots: web3fs-a.manifest.sgx web3fs-b.manifest.sgx provision.manifest.sgx
 direct: web3fs.manifest
 
 # The server enclave and — rendered from the same template with provision=1 —
@@ -35,7 +44,13 @@ web3fs.manifest: PROVISION = 0
 provision.manifest: PROVISION = 1
 export.manifest: PROVISION = 0
 export.manifest: EXPORT = 1
-web3fs.manifest provision.manifest export.manifest: web3fs.manifest.template
+web3fs-a.manifest: PROVISION = 0
+web3fs-a.manifest: SLOT = a
+web3fs-a.manifest: PORT = $(SLOT_A_PORT)
+web3fs-b.manifest: PROVISION = 0
+web3fs-b.manifest: SLOT = b
+web3fs-b.manifest: PORT = $(SLOT_B_PORT)
+web3fs.manifest provision.manifest export.manifest web3fs-a.manifest web3fs-b.manifest: web3fs.manifest.template
 	gramine-manifest \
 		-Dlog_level=$(LOG_LEVEL) \
 		-Darch_libdir=$(ARCH_LIBDIR) \
@@ -47,6 +62,7 @@ web3fs.manifest provision.manifest export.manifest: web3fs.manifest.template
 		-Dprovision=$(PROVISION) \
 		-Dtls=$(TLS) \
 		-Dexport=$(EXPORT) \
+		-Dslot=$(SLOT) \
 		$< $@
 
 # Also emits the .sig (SIGSTRUCT) — its MRENCLAVE is the measurement that
@@ -57,4 +73,4 @@ web3fs.manifest provision.manifest export.manifest: web3fs.manifest.template
 	gramine-sgx-sign --manifest $< --output $@
 
 clean:
-	rm -f web3fs.manifest provision.manifest export.manifest *.manifest.sgx *.sig *.mrenclave
+	rm -f *.manifest *.manifest.sgx *.sig *.mrenclave
