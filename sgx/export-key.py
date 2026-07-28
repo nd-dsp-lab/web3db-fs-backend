@@ -13,8 +13,12 @@ it, use it, then delete export.manifest.sgx and export.sig from the host —
 without them the enclave cannot launch, and re-signing needs the signing
 key, which does not live on the SGX host.
 
-stdout carries the key alone (nothing else, so a redirect captures exactly
-it); the digest for verification goes to stderr.
+stdout carries the key alone; the digest for verification goes to stderr.
+Some ssh setups merge the two, in which case the redirect captures the
+digest line as well — the key is then the 64-hex-character token that is
+not the digest:
+
+    grep -oE '\\b[0-9a-f]{64}\\b' master-key.hex   # digest first, key second
 """
 import hashlib
 import sys
