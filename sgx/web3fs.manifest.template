@@ -76,6 +76,10 @@ fs.mounts = [
   { type = "encrypted", path = "/web3fs/thumbs", uri = "file:{{ backend_root }}/thumbs-sealed", key_name = "_sgx_mrsigner" },
 ]
 
+# DCAP quotes for /attestation — Gramine exposes /dev/attestation/* inside
+# the enclave and routes quote generation through the host's aesmd.
+sgx.remote_attestation = "dcap"
+
 # Sapphire Rapids: EDMM adds EPC pages on demand instead of pre-faulting the
 # whole enclave_size at startup, so a generous size costs nothing.
 sgx.edmm_enable = true

@@ -39,6 +39,11 @@ def prepare(name):
     with open(f"{name}.tbs.json", "w", encoding="utf-8") as f:
         json.dump({"date": date.isoformat(), "sha256": hashlib.sha256(data).hexdigest()}, f)
 
+    # The per-release measurement /attestation quotes carry — publish this
+    # so verify-attestation.py callers have something to compare against.
+    with open(f"{name}.mrenclave", "w", encoding="utf-8") as f:
+        f.write(sigstruct["enclave_hash"].hex() + "\n")
+
     print(f"MRENCLAVE {sigstruct['enclave_hash'].hex()}")
     print(f"to sign:  {name}.tbs")
 

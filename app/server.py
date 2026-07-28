@@ -4,6 +4,7 @@ import uvicorn
 from fastapi import FastAPI
 
 from configure import configure_app
+from routers.attestation import router as attestation_router
 from routers.auth import router as auth_router
 from routers.sharing import router as sharing_router
 from routers.file_ops import router as file_ops_router
@@ -16,6 +17,7 @@ from routers.wallet import router as wallet_router
 app = FastAPI()
 configure_app(app)  # CORS + other startup steps
 
+app.include_router(attestation_router)
 app.include_router(auth_router)
 app.include_router(sharing_router)
 app.include_router(file_ops_router)
