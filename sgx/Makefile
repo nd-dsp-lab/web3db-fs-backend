@@ -22,6 +22,7 @@ HOST ?= 127.0.0.1
 PORT ?= 8091
 LOG_LEVEL ?= error
 TLS ?= 0
+EXPORT ?= 0
 
 .PHONY: all direct clean
 all: web3fs.manifest.sgx provision.manifest.sgx
@@ -32,7 +33,9 @@ direct: web3fs.manifest
 # encrypted mount:  cat .env | gramine-sgx provision
 web3fs.manifest: PROVISION = 0
 provision.manifest: PROVISION = 1
-web3fs.manifest provision.manifest: web3fs.manifest.template
+export.manifest: PROVISION = 0
+export.manifest: EXPORT = 1
+web3fs.manifest provision.manifest export.manifest: web3fs.manifest.template
 	gramine-manifest \
 		-Dlog_level=$(LOG_LEVEL) \
 		-Darch_libdir=$(ARCH_LIBDIR) \
@@ -43,6 +46,7 @@ web3fs.manifest provision.manifest: web3fs.manifest.template
 		-Dport=$(PORT) \
 		-Dprovision=$(PROVISION) \
 		-Dtls=$(TLS) \
+		-Dexport=$(EXPORT) \
 		$< $@
 
 # Also emits the .sig (SIGSTRUCT) — its MRENCLAVE is the measurement that
@@ -53,4 +57,4 @@ web3fs.manifest provision.manifest: web3fs.manifest.template
 	gramine-sgx-sign --manifest $< --output $@
 
 clean:
-	rm -f web3fs.manifest provision.manifest *.manifest.sgx *.sig
+	rm -f web3fs.manifest provision.manifest export.manifest *.manifest.sgx *.sig *.mrenclave

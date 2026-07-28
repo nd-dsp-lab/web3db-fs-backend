@@ -22,6 +22,10 @@ loader.log_level = "{{ log_level }}"
 # a chdir.
 {% if provision == "1" %}
 loader.argv = ["python3", "/web3fs/sgx/provision.py"]
+{% elif export == "1" %}
+# Backup tool for the file-content master key — see export-key.py. Delete
+# its signed artifacts after use; they are a key-extraction capability.
+loader.argv = ["python3", "/web3fs/sgx/export-key.py"]
 {% elif tls == "1" %}
 # End-to-end TLS: the session terminates inside the enclave. The key was
 # provisioned into the sealed mount, so no host — the reverse proxy
@@ -103,6 +107,7 @@ sgx.trusted_files = [
   "file:{{ venv }}/lib/",
   "file:{{ backend_root }}/app/",
   "file:{{ backend_root }}/sgx/provision.py",
+  "file:{{ backend_root }}/sgx/export-key.py",
 ]
 
 # Mutable or host-managed files the enclave reads/writes without integrity
