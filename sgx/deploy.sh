@@ -97,7 +97,9 @@ echo "== 3/7  boot slot $IDLE_SLOT (the live slot keeps serving)"
 # Idempotent, so --stage followed by --yes doesn't start a second copy.
 ssh -n "$SGX_HOST" "if curl -sk --max-time 5 https://127.0.0.1:$IDLE_PORT/storage-stats | grep -q ipfs; then \
         echo '  already serving — reusing it'; \
-    else cd $SGX_DIR && nohup gramine-sgx web3fs-$IDLE_SLOT > ../logs/gramine-$IDLE_SLOT.log 2>&1 & echo '  started'; fi"
+    else cd $SGX_DIR && \
+        (nohup gramine-sgx web3fs-$IDLE_SLOT > ../logs/gramine-$IDLE_SLOT.log 2>&1 </dev/null &) && \
+        echo '  started'; fi"
 
 echo "== 4/7  wait for it to serve (~5 min)"
 ssh -n "$SGX_HOST" "for i in \$(seq 1 16); do sleep 30; \
@@ -108,11 +110,17 @@ ssh -n "$SGX_HOST" "for i in \$(seq 1 16); do sleep 30; \
 
 echo "== 5/7  make sure the proxy can reach it"
 # Slot a's tunnel is the container's (tunnel.yml); slot b needs its own.
-# ExitOnForwardFailure makes a duplicate attempt fail harmlessly.
-ssh -n "$SGX_HOST" "pgrep -f 'ssh .*-R $IDLE_PORT:localhost:$IDLE_PORT' >/dev/null || \
-    ssh -i ~/key/ec2.pem -o StrictHostKeyChecking=no -o ExitOnForwardFailure=yes \
-        -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
-        -f -N -R $IDLE_PORT:localhost:$IDLE_PORT ubuntu@proxy.web3db.org; echo '  tunnel up'"
+# Ask the proxy whether the forward exists rather than grepping for the ssh
+# process: a pattern describing the tunnel also appears in the command line
+# that creates it, so pgrep matches itself and skips the work.
+if ssh -n "$PROXY_HOST" "ss -tln | grep -q '127.0.0.1:$IDLE_PORT '"; then
+    echo "  tunnel already up"
+else
+    ssh -n "$SGX_HOST" "ssh -i ~/key/ec2.pem -o StrictHostKeyChecking=no \
+        -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
+        -f -N -R $IDLE_PORT:localhost:$IDLE_PORT ubuntu@proxy.web3db.org"
+    echo "  tunnel started"
+fi
 ssh -n "$PROXY_HOST" "curl -sk --max-time 8 https://127.0.0.1:$IDLE_PORT/storage-stats" >/dev/null \
     || { echo "proxy cannot reach slot $IDLE_SLOT — aborting, slot $LIVE_SLOT still live"; exit 1; }
 
