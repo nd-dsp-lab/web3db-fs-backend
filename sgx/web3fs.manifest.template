@@ -10,10 +10,7 @@
 # only enclaves signed with our enclave key can derive it). The same template
 # renders two enclaves: the server, and with provision=1 a one-shot tool that
 # reads a plaintext .env on stdin and writes it into the sealed mount.
-# Two slots (a and b) render from this template, differing only in listen
-# port and thumbnail cache. A deploy boots the idle slot, waits for it to
-# serve, and flips the proxy to it — see deploy.sh. Each slot has its own
-# MRENCLAVE, so a release publishes two measurements.
+# TLS-in-enclave and attestation are phases 4-5.
 
 libos.entrypoint = "{{ entrypoint }}"
 
@@ -80,12 +77,7 @@ fs.mounts = [
   # Thumbnails are decrypted previews of sealed files, so their cache is
   # sealed too. Fresh host dir (not thumbs/): an encrypted mount can't read
   # pre-existing plaintext files, they'd 500 on open.
-  #
-  # Per slot, because a blue/green deploy has both slots running for a few
-  # minutes and Gramine's encrypted files are not safe to write from two
-  # enclaves at once. Everything else the slots share is read-only at
-  # runtime. The cost is a cold thumbnail cache after each flip.
-  { type = "encrypted", path = "/web3fs/thumbs", uri = "file:{{ backend_root }}/thumbs-{{ slot }}", key_name = "_sgx_mrsigner" },
+  { type = "encrypted", path = "/web3fs/thumbs", uri = "file:{{ backend_root }}/thumbs-sealed", key_name = "_sgx_mrsigner" },
 ]
 
 # DCAP quotes for /attestation — Gramine exposes /dev/attestation/* inside
