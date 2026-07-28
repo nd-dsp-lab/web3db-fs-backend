@@ -23,6 +23,8 @@ PORT ?= 8091
 LOG_LEVEL ?= error
 TLS ?= 0
 EXPORT ?= 0
+CSR ?= 0
+PROMOTE ?= 0
 
 .PHONY: all direct clean
 all: web3fs.manifest.sgx provision.manifest.sgx
@@ -35,7 +37,11 @@ web3fs.manifest: PROVISION = 0
 provision.manifest: PROVISION = 1
 export.manifest: PROVISION = 0
 export.manifest: EXPORT = 1
-web3fs.manifest provision.manifest export.manifest: web3fs.manifest.template
+csr.manifest: PROVISION = 0
+csr.manifest: CSR = 1
+promote.manifest: PROVISION = 0
+promote.manifest: PROMOTE = 1
+web3fs.manifest provision.manifest export.manifest csr.manifest promote.manifest: web3fs.manifest.template
 	gramine-manifest \
 		-Dlog_level=$(LOG_LEVEL) \
 		-Darch_libdir=$(ARCH_LIBDIR) \
@@ -47,6 +53,8 @@ web3fs.manifest provision.manifest export.manifest: web3fs.manifest.template
 		-Dprovision=$(PROVISION) \
 		-Dtls=$(TLS) \
 		-Dexport=$(EXPORT) \
+		-Dcsr=$(CSR) \
+		-Dpromote=$(PROMOTE) \
 		$< $@
 
 # Also emits the .sig (SIGSTRUCT) — its MRENCLAVE is the measurement that

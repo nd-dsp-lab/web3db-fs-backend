@@ -6,10 +6,11 @@
 #   ./renew-cert.sh             renew (prompts before the restart)
 #   ./renew-cert.sh --yes       renew without prompting
 #
-# Run from a trusted workstation, not from either server. The key is
-# generated here, the CSR goes to the proxy for the ACME challenge, and the
-# key + issued chain are piped into the enclave's sealed mount. The local
-# copies are shredded on exit.
+# Nothing secret passes through this machine. The enclave generates the
+# keypair and hands back a CSR; the CSR goes to the proxy for the ACME
+# challenge; the issued certificate goes back into the enclave, which checks
+# it against the pending key before making the pair live. Every artifact
+# that leaves the enclave is public.
 #
 # The enclave does not need re-signing: the certificate lives in the sealed
 # mount, not in the measured files, so MRENCLAVE is unchanged. Only a
@@ -50,11 +51,10 @@ WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 mkdir "$WORK/tls"
 
-echo "== 1/6  new key + CSR (this machine only)"
-openssl ecparam -genkey -name prime256v1 -noout -out "$WORK/tls/key.pem"
-chmod 600 "$WORK/tls/key.pem"
-openssl req -new -key "$WORK/tls/key.pem" -subj "/CN=$DOMAIN" \
-    -addext "subjectAltName=DNS:$DOMAIN" -out "$WORK/csr.pem"
+echo "== 1/6  ask the enclave for a key and CSR (key stays inside)"
+ssh -n "$SGX_HOST" "cd $SGX_DIR && gramine-sgx csr" > "$WORK/csr.pem"
+grep -q "BEGIN CERTIFICATE REQUEST" "$WORK/csr.pem" || { echo "no CSR came back"; exit 1; }
+openssl req -in "$WORK/csr.pem" -noout -subject
 
 echo "== 2/6  ACME challenge on $PROXY_HOST"
 scp -q "$WORK/csr.pem" "$PROXY_HOST:/tmp/renew-csr.pem"
@@ -66,10 +66,10 @@ ssh -n "$PROXY_HOST" "sudo certbot certonly --webroot -w $WEBROOT \
 scp -q "$PROXY_HOST:/tmp/renew-fullchain.pem" "$WORK/tls/cert.pem"
 ssh -n "$PROXY_HOST" "sudo rm -f /tmp/renew-csr.pem /tmp/renew-cert.pem /tmp/renew-chain.pem /tmp/renew-fullchain.pem"
 
-echo "== 3/6  check the chain matches the key before touching production"
+echo "== 3/6  check the chain matches the CSR before touching production"
 CERT_PUB=$(openssl x509 -in "$WORK/tls/cert.pem" -noout -pubkey | openssl md5)
-KEY_PUB=$(openssl ec -in "$WORK/tls/key.pem" -pubout 2>/dev/null | openssl md5)
-[ "$CERT_PUB" = "$KEY_PUB" ] || { echo "issued certificate does not match the new key — aborting"; exit 1; }
+CSR_PUB=$(openssl req -in "$WORK/csr.pem" -noout -pubkey | openssl md5)
+[ "$CERT_PUB" = "$CSR_PUB" ] || { echo "issued certificate does not match the CSR — aborting"; exit 1; }
 openssl x509 -in "$WORK/tls/cert.pem" -noout -subject -enddate
 
 if [ "$CONFIRM" = ask ]; then
@@ -81,15 +81,18 @@ if [ "$CONFIRM" = ask ]; then
     [ "$a" = y ] || [ "$a" = Y ] || { echo "aborted; nothing changed"; exit 1; }
 fi
 
-echo "== 4/6  seal into the enclave"
+echo "== 4/6  seal the certificate and activate the pending pair"
+# Only the certificate travels — the key it belongs to is already inside.
 # COPYFILE_DISABLE stops macOS tar from adding ._ AppleDouble entries, which
 # would land in the sealed mount as junk files.
-COPYFILE_DISABLE=1 tar -C "$WORK" -cf - tls/key.pem tls/cert.pem \
+mv "$WORK/tls/cert.pem" "$WORK/tls/cert.pem.new"
+COPYFILE_DISABLE=1 tar -C "$WORK" -cf - tls/cert.pem.new \
     | ssh "$SGX_HOST" "cd $SGX_DIR && gramine-sgx provision"
+ssh -n "$SGX_HOST" "cd $SGX_DIR && gramine-sgx promote"
 
 echo "== 5/6  restart the enclave"
 ssh -n "$SGX_HOST" "bash $SGX_DIR/restart.sh"
 
 echo "== 6/6  verify what the world sees"
 live_dates
-echo "done — the private key never left this machine except sealed into the enclave"
+echo "done — the private key was generated inside the enclave and never left it"

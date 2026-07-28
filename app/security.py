@@ -19,7 +19,10 @@ from permissions import DOWNLOAD
 
 logger = logging.getLogger(__name__)
 
-AUTH_SECRET_FILE = os.path.join(os.path.dirname(__file__), "..", "auth_secret.txt")
+# AUTH_SECRET_FILE points at the enclave's sealed mount in production, so the
+# signing secret is generated and kept where nothing outside SGX can read it.
+AUTH_SECRET_FILE = os.getenv("AUTH_SECRET_FILE") or os.path.join(
+    os.path.dirname(__file__), "..", "auth_secret.txt")
 AUTH_TOKEN_TTL = 24 * 3600
 AUTH_MESSAGE_MAX_AGE = 600  # seconds of clock skew allowed on the signed login message
 

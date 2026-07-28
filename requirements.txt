@@ -1,3 +1,9 @@
+# environment, so it has to be an explicit dependency or every app module
+# fails to import. Capped below 81, where pkg_resources starts warning that
+# it is slated for removal.
+# setuptools. Python 3.12 no longer installs setuptools into a fresh
+# Testing
+# web3 6.x does `import pkg_resources` at import time, which ships with
 aiohappyeyeballs==2.6.1
 aiohttp==3.13.2
 aiosignal==1.4.0
@@ -10,6 +16,7 @@ certifi==2025.11.12
 charset-normalizer==3.4.4
 ckzg==1.0.2
 click==8.1.8
+cryptography==46.0.6
 cytoolz==1.1.0
 eth-account==0.11.3
 eth-hash==0.7.1
@@ -27,12 +34,14 @@ hexbytes==0.3.1
 httpcore==1.0.9
 httpx==0.28.1
 idna==3.11
+iniconfig==2.3.0
 jsonschema-specifications==2025.9.1
 jsonschema==4.25.1
 lru-dict==1.2.0
 multidict==6.7.0
 parsimonious==0.10.0
 pillow==12.3.0
+pluggy==1.6.0
 propcache==0.4.1
 protobuf==6.33.2
 py-ecc==8.0.0
@@ -40,6 +49,8 @@ pycryptodome==3.23.0
 pydantic==2.12.5
 pydantic_core==2.41.5
 pymupdf==1.28.0
+pytest-cov==7.1.0
+pytest==9.1.1
 python-dotenv==1.2.1
 python-multipart==0.0.20
 pyunormalize==17.0.0
@@ -48,11 +59,6 @@ regex==2025.11.3
 requests==2.31.0
 rlp==4.1.0
 rpds-py==0.27.1
-# web3 6.x does `import pkg_resources` at import time, which ships with
-# setuptools. Python 3.12 no longer installs setuptools into a fresh
-# environment, so it has to be an explicit dependency or every app module
-# fails to import. Capped below 81, where pkg_resources starts warning that
-# it is slated for removal.
 setuptools<81
 starlette==0.48.0
 toolz==1.1.0
@@ -63,9 +69,3 @@ uvicorn==0.37.0
 web3==6.11.3
 websockets==15.0.1
 yarl==1.22.0
-
-# Testing
-iniconfig==2.3.0
-pluggy==1.6.0
-pytest==9.1.1
-pytest-cov==7.1.0
