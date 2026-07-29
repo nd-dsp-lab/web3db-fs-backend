@@ -126,15 +126,8 @@ sgx.trusted_files = [
 ]
 
 # Mutable or host-managed files the enclave reads/writes without integrity
-# protection. Secrets are NOT here anymore — they ride the encrypted mount,
-# and so does thumbs/.
-#
-# logs/ stays plain on purpose: logs only the enclave can read are logs nobody
-# reads, and operating this thing needs them. What used to leak through them
-# was the identifiers — filenames, CIDs, wallet addresses — so those are now
-# replaced by keyed pseudonyms before anything is written (see app/logredact.py).
-# The key sits in the encrypted mount, so the tags correlate for an operator
-# and mean nothing to the host.
+# protection. Secrets are NOT here anymore — they ride the encrypted mount.
+# thumbs/ and logs/ stay plain until phase 3 decides what leaks through them.
 sgx.allowed_files = [
   "file:/etc/resolv.conf",
   "file:/etc/hosts",

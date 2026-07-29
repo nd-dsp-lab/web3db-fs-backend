@@ -16,10 +16,8 @@ from types import SimpleNamespace
 os.environ.setdefault("AUTH_SECRET", "00" * 32)
 # filecrypto auto-generates its master key at this path on first use; point
 # it at a temp dir so the suite never touches (or creates) real secrets/.
-_TEST_KEY_DIR = tempfile.mkdtemp(prefix="w3fs-test-keys-")
-os.environ.setdefault("FILE_KEY_FILE", os.path.join(_TEST_KEY_DIR, "file_master_key"))
-# logredact generates its pepper the same way; keep it out of real secrets/ too.
-os.environ.setdefault("LOG_PEPPER_FILE", os.path.join(_TEST_KEY_DIR, "log_pepper"))
+os.environ.setdefault(
+    "FILE_KEY_FILE", os.path.join(tempfile.mkdtemp(prefix="w3fs-test-keys-"), "file_master_key"))
 os.environ.setdefault("CONTRACT_ADDRESS", "0x463FA1e9cF1f7f8b1b450708773aBa8BaBBe86AF")
 os.environ.setdefault("INFURA_URL", "http://localhost:9")  # unreachable on purpose
 os.environ.setdefault("LOG_LEVEL", "WARNING")

@@ -11,7 +11,6 @@ from fastapi.responses import Response, FileResponse, JSONResponse
 from web3 import Web3
 
 import filecrypto
-import logredact
 from configure import IPFS_GATEWAY_URL, contract
 from security import verify_auth_token, can_download, require_download_access
 
@@ -26,8 +25,7 @@ async def download_file_with_name(cid: str, filename: str, x_auth_token: Optiona
     denied = require_download_access(cid, x_auth_token)
     if denied:
         return denied
-    logger.info("Serving %s (%s) to %s", logredact.fname(filename), logredact.cid(cid),
-                logredact.addr(verify_auth_token(x_auth_token or "")))
+    logger.info("Serving %s (%s) to %s", filename, cid, verify_auth_token(x_auth_token or ""))
     try:
         # follow_redirects: kubo's gateway 301-redirects /ipfs/{cid} to the
         # subdomain gateway ({cid}.ipfs.localhost)
@@ -88,8 +86,7 @@ async def download_folder_zip(path: str, x_auth_token: Optional[str] = Header(No
         return JSONResponse(status_code=404, content={"error": "Folder is empty"})
 
     folder_name = prefix.rsplit("/", 1)[-1]
-    logger.info("Serving folder %s (%d files) to %s", logredact.path(prefix), len(entries),
-                logredact.addr(address))
+    logger.info("Serving folder %s (%d files) to %s", prefix, len(entries), address)
     buf = io.BytesIO()
     async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -100,11 +97,9 @@ async def download_folder_zip(path: str, x_auth_token: Optional[str] = Header(No
                         zf.writestr(f"{folder_name}/{rel}", filecrypto.maybe_decrypt(response.content))
                     except ValueError:
                         # One tampered file shouldn't sink the whole zip
-                        logger.warning("download-folder: skipping %s (%s), ciphertext failed verification",
-                                       logredact.cid(cid), logredact.path(rel))
+                        logger.warning("download-folder: skipping %s (%s), ciphertext failed verification", cid, rel)
                 else:
-                    logger.warning("download-folder: skipping %s (%s), gateway %s",
-                                   logredact.cid(cid), logredact.path(rel), response.status_code)
+                    logger.warning("download-folder: skipping %s (%s), gateway %s", cid, rel, response.status_code)
     return Response(
         content=buf.getvalue(),
         media_type="application/zip",
@@ -183,7 +178,7 @@ async def get_thumbnail(cid: str, x_auth_token: Optional[str] = Header(None)):
             img.thumbnail(THUMB_SIZE)
             img.save(thumb_path, "JPEG", quality=70)
         except Exception as e:
-            logger.warning("Thumbnail generation failed for %s: %s", logredact.cid(cid), e)
+            logger.warning("Thumbnail generation failed for %s: %s", cid, e)
             return JSONResponse(status_code=404, content={"error": "Not a previewable image"})
 
     return FileResponse(

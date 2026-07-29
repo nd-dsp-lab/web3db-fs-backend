@@ -8,7 +8,6 @@ from fastapi.responses import JSONResponse
 
 import filecrypto
 import ipfs
-import logredact
 from configure import w3, contract
 from constants import ZERO_ADDRESS
 from models import TransactionRequest
@@ -89,7 +88,7 @@ async def upload_file(file: UploadFile, user_address: str = Form(...), folder_pa
     else:
         full_path = f"{folder_path}/{file.filename}"
 
-    logger.debug("[upload] full_path to send to contract: %s", logredact.path(full_path))
+    logger.debug("[upload] full_path to send to contract: %s", full_path)
 
     # Prepare transaction for frontend to sign
     transaction_data = prepare_upload_transaction(cid, full_path, user_address, file_format)
@@ -117,7 +116,7 @@ async def upload_folder(
     paths: List[str] = Form(...),
     user_address: str = Form(...)
 ):
-    logger.info("Uploading %d files from folder for %s", len(files), logredact.addr(user_address))
+    logger.info("Uploading %d files from folder for %s", len(files), user_address)
 
     uploaded_files = []
     skipped_files = []
@@ -125,8 +124,7 @@ async def upload_folder(
     for idx, file in enumerate(files):
         # The frontend sends the destination path per file, filename included.
         full_path = paths[idx] if idx < len(paths) else "/"
-        logger.debug("[%d] Uploading %s to IPFS (path: %s)",
-                     idx, logredact.fname(file.filename), logredact.path(full_path))
+        logger.debug("[%d] Uploading %s to IPFS (path: %s)", idx, file.filename, full_path)
 
         # Chrome sends webkitRelativePath as the multipart filename for folder
         # uploads ("Docs/a.pdf"). A slashed name makes `ipfs add` build a
@@ -141,7 +139,7 @@ async def upload_folder(
         try:
             cid = ipfs.add_unpinned(actual_filename, file_data)
         except Exception as e:
-            logger.warning("Failed to upload %s to IPFS: %s", logredact.fname(file.filename), e)
+            logger.warning("Failed to upload %s to IPFS: %s", file.filename, e)
             continue
 
         # Skip files whose content already exists on-chain — building the tx
@@ -151,14 +149,12 @@ async def upload_folder(
         except Exception:
             existing_owner = ZERO_ADDRESS
         if existing_owner != ZERO_ADDRESS:
-            logger.warning("Skipping %s: CID already owned by %s",
-                           logredact.fname(actual_filename), logredact.addr(existing_owner))
+            logger.warning("Skipping %s: CID already owned by %s", actual_filename, existing_owner)
             skipped_files.append({"filename": actual_filename, "cid": cid, "owner": existing_owner})
             continue
         # ...and identical files within the same batch (same CID twice)
         if any(u["cid"] == cid for u in uploaded_files):
-            logger.warning("Skipping %s: duplicate content within this batch",
-                           logredact.fname(actual_filename))
+            logger.warning("Skipping %s: duplicate content within this batch", actual_filename)
             skipped_files.append({"filename": actual_filename, "cid": cid, "owner": user_address})
             continue
 
@@ -169,7 +165,7 @@ async def upload_folder(
         try:
             ipfs.pin(cid)
         except Exception as e:
-            logger.error("Skipping %s: pin failed (%s)", logredact.fname(actual_filename), e)
+            logger.error("Skipping %s: pin failed (%s)", actual_filename, e)
             skipped_files.append({"filename": actual_filename, "cid": cid, "reason": "pin_failed"})
             continue
 

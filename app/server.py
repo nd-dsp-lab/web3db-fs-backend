@@ -5,7 +5,6 @@ import time
 import uvicorn
 from fastapi import FastAPI, Request
 
-import logredact
 from configure import configure_app
 from routers.attestation import router as attestation_router
 from routers.auth import router as auth_router
@@ -27,18 +26,16 @@ access_logger = logging.getLogger("web3fs.access")
 async def log_requests(request: Request, call_next):
     """One line per request, and the only place unhandled errors are recorded.
 
-    This replaces uvicorn's access log, which prints raw paths — and those
-    carry the filenames and CIDs that logredact exists to keep off the host's
-    disk. Uvicorn's own access log is disabled where the server is launched.
+    Replaces uvicorn's access log (disabled where the server is launched) so
+    that request lines go through our own formatter and file handler, and so
+    that an exception escaping the app names the request that caused it —
+    uvicorn's error logger reports the traceback but not the route.
     """
     started = time.perf_counter()
-    where = logredact.path(request.url.path)
+    where = request.url.path
     try:
         response = await call_next(request)
     except Exception:
-        # An exception escaping the app would otherwise reach only uvicorn's
-        # error logger; log it here so the failing request is identified, then
-        # re-raise and let the framework return its 500.
         elapsed = (time.perf_counter() - started) * 1000
         access_logger.exception("%s %s -> unhandled exception in %.0fms",
                                 request.method, where, elapsed)
@@ -72,7 +69,7 @@ if __name__ == "__main__":
     # logger then propagates to the root logger configured in logging_config,
     # so everything lands in logs/web3fs.log in one format.
     #
-    # access_log=False: the log_requests middleware above covers every request
-    # already, and uvicorn's version would print unredacted paths beside it.
+    # access_log=False: the log_requests middleware above already covers every
+    # request, and uvicorn's version would print a second line beside it.
     uvicorn.run("server:app", host="0.0.0.0", port=8090, reload=reload,
                 log_config=None, access_log=False)

@@ -6,7 +6,6 @@ from fastapi import APIRouter, Body
 from fastapi.responses import JSONResponse
 from web3 import Web3
 
-import logredact
 from configure import contract
 from models import DeleteRequest, MoveRequest, MoveBatchRequest, DeleteBatchRequest, DeleteFolder
 from helpers import (
@@ -106,8 +105,7 @@ def delete_folder(request: DeleteFolder = Body(...)):
         txn = None
 
         if final_cids:
-            logger.info("Found %d CIDs to delete: %s", len(final_cids),
-                        [logredact.cid(c) for c in final_cids])
+            logger.info("Found %d CIDs to delete: %s", len(final_cids), final_cids)
             txn = prepare_delete_folder(final_cids, user_address)
         else:
             logger.info("No files found on-chain for this folder path")

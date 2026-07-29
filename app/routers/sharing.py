@@ -9,7 +9,6 @@ from fastapi import APIRouter, Header
 from fastapi.responses import JSONResponse
 from web3 import Web3
 
-import logredact
 from configure import contract
 from security import verify_auth_token
 from models import (
@@ -89,8 +88,7 @@ def notify_share(request: NotifyShareRequest):
             smtp.starttls()
             smtp.login(smtp_user, smtp_password)
             smtp.sendmail(NOTIFY_FROM, [to_email], msg.as_string())
-        logger.info("[notify-share] sent to %s for file %s",
-                    logredact.email(to_email), logredact.fname(request.filename))
+        logger.info("[notify-share] sent to %s for file %s", to_email, request.filename)
         return {"sent": True}
     except smtplib.SMTPException as e:
         # Notification is best-effort: the share itself already succeeded
@@ -156,8 +154,7 @@ async def resolve_recipient(request: ResolveRecipientRequest):
         address = _extract_eth_address(created.json())
         if not address:
             return JSONResponse(status_code=502, content={"error": "Wallet creation returned no address"})
-        logger.info("[resolve-recipient] pregenerated wallet %s for %s",
-                    logredact.addr(address), logredact.email(email))
+        logger.info("[resolve-recipient] pregenerated wallet %s for %s", address, email)
         return {"address": address, "existed": False, "pregenerated": True}
 
 
@@ -216,7 +213,7 @@ def unshare_file(request: UnshareRequest):
 def get_shared_users(cid: str, x_auth_token: Optional[str] = Header(None)):
     requester = verify_auth_token(x_auth_token or "")
     if not requester:
-        logger.warning("shared-users denied for %s: missing or invalid auth token", logredact.cid(cid))
+        logger.warning("shared-users denied for %s: missing or invalid auth token", cid)
         return JSONResponse(status_code=401, content={"error": "Missing or invalid auth token"})
     try:
         owner = contract.functions.getFileOwner(cid).call()
@@ -226,7 +223,7 @@ def get_shared_users(cid: str, x_auth_token: Optional[str] = Header(None)):
         else:
             return {"shared_by": owner}
     except Exception as e:
-        logger.error("Error fetching shared users for CID %s: %s", logredact.cid(cid), e)
+        logger.error("Error fetching shared users for CID %s: %s", cid, e)
         return {"shared_with": [], "error": str(e)}
 
 

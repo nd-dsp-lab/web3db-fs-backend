@@ -68,8 +68,8 @@ def setup_logging():
     # behind each download is already covered by our own "Serving" log).
     logging.getLogger("httpx").setLevel(logging.WARNING)
     # Keep CORS preflights out of the access log. Uvicorn's own access log is
-    # switched off (it prints unredacted paths); the filter applies to the
-    # middleware's logger, and stays on uvicorn's in case it is ever re-enabled.
+    # switched off in favour of the middleware in server.py; the filter stays
+    # on uvicorn's logger in case it is ever re-enabled.
     for name in ("uvicorn.access", "web3fs.access"):
         logging.getLogger(name).addFilter(_DropOptions())
 
