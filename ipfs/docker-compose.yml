@@ -69,6 +69,11 @@ services:
     container_name: ipfs-gc
     restart: unless-stopped
     depends_on: [ipfs]
+    # The image's healthcheck probes a daemon on this container's own
+    # localhost. There isn't one here — only a sleep loop that talks to the
+    # daemon next door — so it would report unhealthy forever.
+    healthcheck:
+      disable: true
     entrypoint: >
       sh -c "
         while true; do
