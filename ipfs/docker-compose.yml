@@ -43,7 +43,38 @@ services:
         ipfs config --json Swarm.EnableHolePunching true &&
         ipfs config --json AutoNAT '{}' &&
         ipfs config --json Discovery.MDNS '{\"Enabled\": false}' &&
-        ipfs daemon --migrate --enable-gc --routing=dhtclient
+        ipfs config Datastore.StorageMax $$(df -P -B1 /data/ipfs | tail -1 | awk '{print $$4}') &&
+        ipfs daemon --migrate --routing=dhtclient
+      "
+    # StorageMax is free space on the volume at startup, not the volume's total
+    # size: the disk carries the OS and everything else on this host, so total
+    # size would promise storage that isn't there. Free space is also what makes
+    # StorageMax - RepoSize meaningful — the sidebar shows that as the space
+    # left, and every byte the repo gains is a byte the disk loses, so the
+    # subtraction stays true as the repo grows. It goes stale only when
+    # something *else* on the host grows; restarting this service re-reads it.
+
+  # Garbage collection runs here rather than via the daemon's --enable-gc.
+  # That flag only sweeps once the repo passes 90% of Datastore.StorageMax,
+  # which the repo will not reach until the disk is nearly full — far too late
+  # to be the only sweep. Unpinned blocks (DHT cache, and the transient adds in
+  # the upload dedup path) would sit unswept until then.
+  #
+  # Daily, not hourly: /upload adds a block unpinned, checks the chain for a
+  # duplicate, then pins. A sweep landing in that window drops the block out
+  # from under the pin. The window is short and the traffic is low, so fewer
+  # sweeps means fewer chances to hit it.
+  ipfs-gc:
+    image: ipfs/kubo:latest
+    container_name: ipfs-gc
+    restart: unless-stopped
+    depends_on: [ipfs]
+    entrypoint: >
+      sh -c "
+        while true; do
+          sleep 86400
+          ipfs --api /dns4/ipfs/tcp/5001 repo gc || echo 'gc failed, retrying tomorrow'
+        done
       "
 
 
