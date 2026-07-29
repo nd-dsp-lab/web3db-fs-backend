@@ -8,6 +8,7 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from web3 import Web3
 
+import logredact
 from configure import w3
 from models import FundWalletRequest
 
@@ -76,5 +77,6 @@ def fund_wallet(request: FundWalletRequest):
 
     # Record only after confirmed success so a failed drip can be retried
     _save_funded_address(address)
-    logger.info("[fund-wallet] sent %s SepETH to %s: %s", FUND_AMOUNT_ETH, address, tx_hash.hex())
+    logger.info("[fund-wallet] sent %s SepETH to %s: %s",
+                FUND_AMOUNT_ETH, logredact.addr(address), tx_hash.hex())
     return {"funded": True, "amount_eth": FUND_AMOUNT_ETH, "tx_hash": tx_hash.hex()}

@@ -6,6 +6,7 @@ import requests
 from fastapi import APIRouter
 from web3 import Web3
 
+import logredact
 from configure import IPFS_API_URL, IPFS_GATEWAY_URL, contract
 
 logger = logging.getLogger(__name__)
@@ -65,7 +66,8 @@ def get_files(user_address: str = None):
                 owner = contract.functions.getFileOwner(cid).call()
                 break
             except Exception as e:
-                logger.warning("getFileOwner failed for %s (attempt %d): %s", cid, attempt + 1, e)
+                logger.warning("getFileOwner failed for %s (attempt %d): %s",
+                               logredact.cid(cid), attempt + 1, e)
 
         is_owner = (owner is not None and owner.lower() == user_address.lower())
 
@@ -81,7 +83,7 @@ def get_files(user_address: str = None):
             try:
                 shared_with = contract.functions.getSharedUsers(cid).call()
             except Exception as e:
-                logger.warning("getSharedUsers failed for %s: %s", cid, e)
+                logger.warning("getSharedUsers failed for %s: %s", logredact.cid(cid), e)
 
         structured_files.append({
             "cid": cid,        # cid
@@ -97,7 +99,7 @@ def get_files(user_address: str = None):
             "ipfs_url": f"{IPFS_GATEWAY_URL}/{cid}"
         })
 
-    logger.debug("User files: %s", structured_files)
+    logger.debug("User files: %d entries", len(structured_files))
     return {"user_files": structured_files}
 
 

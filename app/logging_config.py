@@ -22,10 +22,11 @@ BACKUP_COUNT = 5             # keep 5 rotations -> ~25 MB ceiling
 
 
 class _DropOptions(logging.Filter):
-    """Drop CORS preflight lines from the uvicorn access log — every real
-    request is preceded by an OPTIONS 200 that carries no signal."""
+    """Drop CORS preflight lines — every real request is preceded by an
+    OPTIONS that carries no signal."""
     def filter(self, record):
-        return '"OPTIONS ' not in record.getMessage()
+        msg = record.getMessage()
+        return '"OPTIONS ' not in msg and not msg.startswith("OPTIONS ")
 
 
 def setup_logging():
@@ -66,7 +67,10 @@ def setup_logging():
     # Quiet the httpx client's per-request INFO lines (the IPFS gateway fetch
     # behind each download is already covered by our own "Serving" log).
     logging.getLogger("httpx").setLevel(logging.WARNING)
-    # Keep CORS preflights out of the access log.
-    logging.getLogger("uvicorn.access").addFilter(_DropOptions())
+    # Keep CORS preflights out of the access log. Uvicorn's own access log is
+    # switched off (it prints unredacted paths); the filter applies to the
+    # middleware's logger, and stays on uvicorn's in case it is ever re-enabled.
+    for name in ("uvicorn.access", "web3fs.access"):
+        logging.getLogger(name).addFilter(_DropOptions())
 
     _configured = True

@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 from eth_account import Account
 from eth_account.messages import encode_defunct
 
+import logredact
 from models import AuthTokenRequest
 from security import (
     auth_message,
@@ -31,11 +32,12 @@ def issue_auth_token(request: AuthTokenRequest):
         logger.warning("Auth signature recovery failed: %s", e)
         return JSONResponse(status_code=401, content={"error": "Invalid signature"})
     if recovered.lower() != request.address.lower():
-        logger.warning("Auth denied: signature recovered %s, expected %s", recovered.lower(), request.address.lower())
+        logger.warning("Auth denied: signature recovered %s, expected %s",
+                       logredact.addr(recovered), logredact.addr(request.address))
         return JSONResponse(status_code=401, content={"error": "Signature does not match address"})
 
     address = request.address.lower()
     expiry = int(time.time()) + AUTH_TOKEN_TTL
     payload = f"{address}.{expiry}"
-    logger.info("Auth token issued for %s", address)
+    logger.info("Auth token issued for %s", logredact.addr(address))
     return {"token": f"{payload}.{_token_signature(payload)}", "expires": expiry}

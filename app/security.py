@@ -14,6 +14,7 @@ import secrets as secrets_mod
 from web3 import Web3
 from fastapi.responses import JSONResponse
 
+import logredact
 from configure import contract
 from permissions import DOWNLOAD
 
@@ -77,7 +78,8 @@ def can_download(cid: str, address: str) -> bool:
             return True
         return bool(contract.functions.getPermissions(cid, checksum).call() & DOWNLOAD)
     except Exception as e:
-        logger.warning("Permission check failed for %s/%s: %s", cid, address, e)
+        logger.warning("Permission check failed for %s/%s: %s",
+                       logredact.cid(cid), logredact.addr(address), e)
         return False
 
 
@@ -85,9 +87,10 @@ def require_download_access(cid: str, token: str):
     """Returns an error JSONResponse, or None if access is allowed."""
     address = verify_auth_token(token or "")
     if not address:
-        logger.warning("Download denied for %s: missing or invalid auth token", cid)
+        logger.warning("Download denied for %s: missing or invalid auth token", logredact.cid(cid))
         return JSONResponse(status_code=401, content={"error": "Missing or invalid auth token"})
     if not can_download(cid, address):
-        logger.warning("Download denied for %s: %s lacks permission", cid, address)
+        logger.warning("Download denied for %s: %s lacks permission",
+                       logredact.cid(cid), logredact.addr(address))
         return JSONResponse(status_code=403, content={"error": "No download permission for this file"})
     return None

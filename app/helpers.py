@@ -2,6 +2,7 @@ import logging
 from typing import Optional
 import requests
 from web3 import Web3
+import logredact
 from configure import w3, contract, IPFS_API_URL
 from permissions import READ, DOWNLOAD
 
@@ -58,7 +59,8 @@ def _owned_only(cids: list[str], user_address: str) -> list[str]:
 
 # return transaction data for frontend to sign
 def prepare_upload_transaction(cid: str, full_path: str, user_address: str, file_format: Optional[str] = None, nonce_offset: int = 0):
-    logger.debug("prepare_upload_transaction CID=%s full_path=%s", cid, full_path)
+    logger.debug("prepare_upload_transaction CID=%s full_path=%s",
+                 logredact.cid(cid), logredact.path(full_path))
     try:
         txn = contract.functions.uploadFile(cid, full_path, file_format or "").build_transaction(
             _base_tx(user_address, nonce_offset))
@@ -75,7 +77,8 @@ def prepare_share_transaction(cid: str, to_address: str, user_address: str):
         to_address = Web3.to_checksum_address(to_address)
         _assert_owner(cid, user_address, "share")
 
-        logger.info("Sharing CID %s with %s using mask %s", cid, to_address, SHARE_MASK)
+        logger.info("Sharing CID %s with %s using mask %s",
+                logredact.cid(cid), logredact.addr(to_address), SHARE_MASK)
         txn = contract.functions.grant(cid, to_address, SHARE_MASK).build_transaction(
             _base_tx(user_address))
         return txn
@@ -131,14 +134,14 @@ def folder_share_set(user_address: str, folder_path: str) -> list[str]:
                 if contract.functions.getFileOwner(cid).call().lower() == owner.lower():
                     owned_cids.append(cid)
             except Exception as e:
-                logger.warning("folder_share_set: getFileOwner failed for %s: %s", cid, e)
+                logger.warning("folder_share_set: getFileOwner failed for %s: %s", logredact.cid(cid), e)
         if owned_cids:
             shared = None
             for cid in owned_cids:
                 try:
                     users = set(contract.functions.getSharedUsers(cid).call())
                 except Exception as e:
-                    logger.warning("folder_share_set: getSharedUsers failed for %s: %s", cid, e)
+                    logger.warning("folder_share_set: getSharedUsers failed for %s: %s", logredact.cid(cid), e)
                     users = set()
                 shared = users if shared is None else (shared & users)
                 if not shared:
@@ -179,7 +182,7 @@ def prepare_inherited_shares(cids: list[str], folder_path: str, user_address: st
             return [], []
         return prepare_inherited_grant_transactions(cids, recipients, user_address), recipients
     except Exception as e:
-        logger.warning("inherited share prep failed for %s: %s", folder_path, e)
+        logger.warning("inherited share prep failed for %s: %s", logredact.path(folder_path), e)
         return [], []
 
 
@@ -231,7 +234,8 @@ def prepare_unshare_transaction(cid: str, to_address: str, user_address: str):
         _assert_owner(cid, user_address, "unshare")
 
         # Unshare permissions (~READ + ~DOWNLOAD) -> bits are flipped in smart contract
-        logger.info("Unsharing CID %s with %s using mask %s", cid, to_address, SHARE_MASK)
+        logger.info("Unsharing CID %s with %s using mask %s",
+                logredact.cid(cid), logredact.addr(to_address), SHARE_MASK)
         txn = contract.functions.revoke(cid, to_address, SHARE_MASK).build_transaction(
             _base_tx(user_address))
         return txn
@@ -341,7 +345,7 @@ def unpin_cids(cids: list[str]):
             entry["unpin_ok"] = rm.ok
         except Exception as e:
             # One unreachable cid must not strand the pins after it.
-            logger.warning("unpin failed for %s: %s", cid, e)
+            logger.warning("unpin failed for %s: %s", logredact.cid(cid), e)
             entry["error"] = str(e)
         result["unpins"].append(entry)
 
