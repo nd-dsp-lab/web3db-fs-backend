@@ -46,8 +46,21 @@ coverage/
 # don't accidentally track local runtime state (sensitive)
 funded_addresses.json
 thumbs/
+# Sealed thumbnail cache: ciphertext, but it is still user file content.
+thumbs-sealed/
 auth_secret.txt
 secrets/
+
+# SGX build outputs. Rendered by sgx/Makefile and produced by the signing
+# flow, per host and per build — the template and the scripts are the
+# sources, these are not. Committing a measurement would also make it look
+# authoritative when the only trustworthy one is what the running enclave
+# reports.
+sgx/*.manifest
+sgx/*.manifest.sgx
+sgx/*.mrenclave
+sgx/*.sig
+sgx/enclave-pub.pem
 
 # local-only documentation
 docs/
