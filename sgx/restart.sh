@@ -7,8 +7,8 @@
 # into the sealed mount. Startup takes ~5 minutes — most of it parsing the
 # trusted-file manifest — so the health check below polls patiently.
 #
-# The plain-python restart.sh at the repo root still works for dev hosts;
-# this one is what production uses since TLS moved inside the enclave.
+# Dev hosts run dev.sh at the repo root instead; this is what production
+# uses since TLS moved inside the enclave. Usually invoked via deploy.sh.
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 fuser -k 8090/tcp 2>/dev/null
 sleep 2
