@@ -54,16 +54,18 @@ class _Resp:
         return self._payload
 
 
-def test_storage_stats_reports_disk_and_repo(client, monkeypatch):
+def test_storage_stats_reports_only_quota_fields(client, monkeypatch):
     monkeypatch.setattr(files_mod.requests, "post",
                         lambda *a, **k: _Resp(True, {"RepoSize": 100, "StorageMax": 1000}))
     r = client.get("/storage-stats")
     assert r.status_code == 200
     body = r.json()
-    assert body["ipfs_repo_size"] == 100
     assert body["ipfs_storage_max"] == 1000
     assert body["disk_total"] > 0
-    assert body["disk_free"] > 0
+    # Node-wide usage numbers stay private: they would reveal server capacity
+    # and other users' aggregate usage.
+    assert "ipfs_repo_size" not in body
+    assert "disk_free" not in body
 
 
 def test_storage_stats_survives_ipfs_failure(client, monkeypatch):
@@ -72,6 +74,6 @@ def test_storage_stats_survives_ipfs_failure(client, monkeypatch):
     monkeypatch.setattr(files_mod.requests, "post", boom)
     r = client.get("/storage-stats")
     assert r.status_code == 200
-    # IPFS keys absent, but disk stats still present
-    assert "ipfs_repo_size" not in r.json()
+    # IPFS key absent, but the disk-size fallback still present
+    assert "ipfs_storage_max" not in r.json()
     assert r.json()["disk_total"] > 0

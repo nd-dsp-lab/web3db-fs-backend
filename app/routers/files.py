@@ -101,9 +101,11 @@ def get_files(user_address: str = None):
     return {"user_files": structured_files}
 
 
-# Storage capacity for the sidebar usage bar: free disk on the volume backing
-# the IPFS repo (via repo/stat when reachable, else this host's disk — the
-# Docker volume lives on it anyway).
+# Quota for scaling the sidebar usage bar: the IPFS repo's configured cap
+# (via repo/stat when reachable, else this host's disk size — the Docker
+# volume lives on it anyway). Deliberately nothing else: repo size and free
+# space are node-wide numbers that would reveal the server's capacity and
+# other users' aggregate usage.
 @router.get("/storage-stats")
 def storage_stats():
     import shutil
@@ -111,15 +113,11 @@ def storage_stats():
     try:
         r = requests.post(f"{IPFS_API_URL}/repo/stat", timeout=5)
         if r.ok:
-            j = r.json()
-            stats["ipfs_repo_size"] = j.get("RepoSize")
-            stats["ipfs_storage_max"] = j.get("StorageMax")
+            stats["ipfs_storage_max"] = r.json().get("StorageMax")
     except Exception as e:
         logger.warning("repo/stat failed: %s", e)
     try:
-        du = shutil.disk_usage("/")
-        stats["disk_total"] = du.total
-        stats["disk_free"] = du.free
+        stats["disk_total"] = shutil.disk_usage("/").total
     except Exception as e:
         logger.warning("disk_usage failed: %s", e)
     return stats
