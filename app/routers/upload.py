@@ -42,13 +42,19 @@ def _released_cids(func_name: str, func_params: dict) -> list:
     return []
 
 
-# Register the file to ipfs and get a cid
+# Register the file to ipfs and get a cid.
+#
+# Sync on purpose, despite the I/O: every call in here — the IPFS HTTP API,
+# the contract reads — is blocking, so as a coroutine this would stall the
+# event loop for the whole upload and serialise every other request behind it.
+# A plain def runs in the threadpool instead. Read the body off the spooled
+# file rather than awaiting it, for the same reason.
 @router.post("/upload")
-async def upload_file(file: UploadFile, user_address: str = Form(...), folder_path: str = Form(""), file_format: Optional[str] = None):
+def upload_file(file: UploadFile, user_address: str = Form(...), folder_path: str = Form(""), file_format: Optional[str] = None):
     # Sealed before IPFS ever sees it: the node stores only ciphertext, and
     # the CID (computed below) addresses the ciphertext. Encryption is
     # deterministic, so the duplicate checks still catch identical content.
-    file_data = filecrypto.encrypt(await file.read())
+    file_data = filecrypto.encrypt(file.file.read())
 
     # 1. Add to IPFS unpinned — just to compute the CID. Pinning is deferred
     # until the duplicate check passes, so a rejected duplicate never touches
@@ -110,8 +116,9 @@ async def upload_file(file: UploadFile, user_address: str = Form(...), folder_pa
     }
 
 
+# Sync for the same reason as /upload, and more so: this loops over every file.
 @router.post("/upload-folder")
-async def upload_folder(
+def upload_folder(
     files: List[UploadFile],
     paths: List[str] = Form(...),
     user_address: str = Form(...)
@@ -134,7 +141,7 @@ async def upload_folder(
         actual_filename = file.filename.split('/')[-1]
 
         # Read, seal (see /upload), and add to IPFS
-        file_data = filecrypto.encrypt(await file.read())
+        file_data = filecrypto.encrypt(file.file.read())
         # Add unpinned — pin only after the duplicate checks pass (see /upload)
         try:
             cid = ipfs.add_unpinned(actual_filename, file_data)
