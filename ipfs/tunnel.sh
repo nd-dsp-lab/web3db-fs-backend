@@ -10,7 +10,7 @@
 #
 # Runs on tjws-06 from the user crontab (@reboot), log: ~/ipfs-tunnel.log
 while true; do
-  ssh -i ~/.ssh/id_tunnel -N \
+  ssh -i ~/.ssh/id_ipfs_tunnel -N \
     -R 0.0.0.0:4001:127.0.0.1:4001 \
     -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
     -o ExitOnForwardFailure=yes \
