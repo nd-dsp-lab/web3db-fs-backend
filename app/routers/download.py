@@ -4,6 +4,7 @@ import io
 import os
 import logging
 from typing import Optional
+from urllib.parse import quote
 
 import httpx
 from fastapi import APIRouter, Header
@@ -17,6 +18,14 @@ from security import verify_auth_token, can_download, require_download_access
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _content_disposition(filename: str) -> str:
+    """RFC 6266 attachment header. HTTP headers are latin-1, so a non-ASCII
+    name (macOS's narrow no-break space in screenshot names, Bengali, ...)
+    goes in filename* percent-encoded, with an ASCII fallback for filename."""
+    fallback = filename.encode("ascii", "replace").decode().replace('"', "'")
+    return f"attachment; filename=\"{fallback}\"; filename*=UTF-8''{quote(filename)}"
 
 
 # endpoint for downloading a file from ipfs -> updated
@@ -47,7 +56,7 @@ async def download_file_with_name(cid: str, filename: str, x_auth_token: Optiona
         return Response(
             content=content,
             media_type="application/octet-stream",
-            headers={"Content-Disposition": f"attachment; filename={filename}"}
+            headers={"Content-Disposition": _content_disposition(filename)}
         )
 
     except Exception as e:
@@ -103,7 +112,7 @@ async def download_folder_zip(path: str, x_auth_token: Optional[str] = Header(No
     return Response(
         content=buf.getvalue(),
         media_type="application/zip",
-        headers={"Content-Disposition": f"attachment; filename={folder_name}.zip"},
+        headers={"Content-Disposition": _content_disposition(f"{folder_name}.zip")},
     )
 
 

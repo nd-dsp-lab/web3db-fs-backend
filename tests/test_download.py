@@ -38,11 +38,28 @@ def test_download_returns_bytes_and_attachment_header(
 
     assert r.status_code == 200
     assert r.content == PDF
-    assert r.headers["content-disposition"] == "attachment; filename=a.pdf"
+    assert r.headers["content-disposition"] == "attachment; filename=\"a.pdf\"; filename*=UTF-8''a.pdf"
     # Explicit length, never chunked: the reverse proxy speaks HTTP/1.0, where
     # chunked transfer-encoding is invalid and broke PDF preview through it.
     assert r.headers["content-length"] == str(len(PDF))
     assert "transfer-encoding" not in r.headers
+
+
+def test_download_non_ascii_filename_is_not_502(
+        client, patch_contract, auth_token, fake_gateway):
+    # macOS screenshot names carry a narrow no-break space (U+202F) before
+    # AM/PM; headers are latin-1, so the raw name used to crash into a 502.
+    patch_contract(owners={"cidA": OWNER})
+    fake_gateway({"cidA": PDF})
+
+    name = "Screenshot 2026-08-20 at 2.51.04\u202fAM.png"
+    r = client.get(f"/download/cidA/{name}", headers={"x-auth-token": auth_token(OWNER)})
+
+    assert r.status_code == 200
+    assert r.content == PDF
+    cd = r.headers["content-disposition"]
+    assert cd.encode("latin-1")  # header must be encodable
+    assert "filename*=UTF-8''Screenshot%202026-08-20%20at%202.51.04%E2%80%AFAM.png" in cd
 
 
 def test_download_shared_user_with_download_bit_allowed(
@@ -101,7 +118,7 @@ def test_download_folder_zips_matching_files_with_relative_paths(
                    headers={"x-auth-token": auth_token(OWNER)})
 
     assert r.status_code == 200
-    assert r.headers["content-disposition"] == "attachment; filename=docs.zip"
+    assert r.headers["content-disposition"] == "attachment; filename=\"docs.zip\"; filename*=UTF-8''docs.zip"
     with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
         assert sorted(zf.namelist()) == ["docs/a.txt", "docs/sub/b.txt"]
         assert zf.read("docs/a.txt") == b"AAA"
