@@ -10,6 +10,7 @@ from types import SimpleNamespace
 import pytest
 
 import routers.sharing as sharing
+from permissions import READ, DOWNLOAD
 
 OWNER = "0x1A28b19f6d2ea1A05F9eFFbcCcbF7E9571877981"
 RECIPIENT = "0x3081Acc05169336e7875ad9f896bF6511397809a"
@@ -61,11 +62,48 @@ def test_unshare_failure_is_500(client, monkeypatch):
 
 
 def test_shared_users_owner_sees_recipients(client, patch_contract, auth_token):
-    patch_contract(owners={"cidA": OWNER}, shared={"cidA": [RECIPIENT]})
+    # No expires entry -> permanent grant -> expires_at_block is None.
+    patch_contract(owners={"cidA": OWNER}, shared={"cidA": [RECIPIENT]},
+                    permissions={("cidA", RECIPIENT): READ | DOWNLOAD})
     r = client.get("/shared-users", params={"cid": "cidA"},
                    headers={"x-auth-token": auth_token(OWNER)})
     assert r.status_code == 200
-    assert r.json() == {"shared_with": [RECIPIENT]}
+    assert r.json() == {"shared_with": [{"address": RECIPIENT, "expires_at_block": None}]}
+
+
+def test_shared_users_reports_the_expiry_block_for_a_time_limited_grant(client, patch_contract, auth_token):
+    patch_contract(owners={"cidA": OWNER}, shared={"cidA": [RECIPIENT]},
+                    permissions={("cidA", RECIPIENT): READ},
+                    expires={("cidA", RECIPIENT): 500})
+    r = client.get("/shared-users", params={"cid": "cidA"},
+                   headers={"x-auth-token": auth_token(OWNER)})
+    assert r.status_code == 200
+    assert r.json() == {"shared_with": [{"address": RECIPIENT, "expires_at_block": 500}]}
+
+
+# getSharedUsers lists every address ever granted access, expired or not --
+# it's only cleaned up on an explicit revoke, never by expiry (the "filter,
+# not cleanup" design: nothing ever runs at the expiry block itself). So a
+# recipient whose grant has expired must not show up here even though the
+# raw on-chain list still names them; getPermissions is the expiry-aware
+# source of truth (0 once _expiresAtBlock has passed), used here to filter.
+def test_shared_users_excludes_a_recipient_whose_access_has_expired(client, patch_contract, auth_token):
+    patch_contract(owners={"cidA": OWNER}, shared={"cidA": [RECIPIENT]})  # no permissions entry -> getPermissions returns 0
+    r = client.get("/shared-users", params={"cid": "cidA"},
+                   headers={"x-auth-token": auth_token(OWNER)})
+    assert r.status_code == 200
+    assert r.json() == {"shared_with": []}
+
+
+def test_shared_users_returns_objects_not_bare_addresses(client, patch_contract, auth_token):
+    # Regression guard for the response shape change: callers now get
+    # {address, expires_at_block} objects, not bare address strings.
+    patch_contract(owners={"cidA": OWNER}, shared={"cidA": [RECIPIENT]},
+                    permissions={("cidA", RECIPIENT): READ})
+    r = client.get("/shared-users", params={"cid": "cidA"},
+                   headers={"x-auth-token": auth_token(OWNER)})
+    entry = r.json()["shared_with"][0]
+    assert set(entry.keys()) == {"address", "expires_at_block"}
 
 
 def test_shared_users_non_owner_sees_sharer(client, patch_contract, auth_token):
@@ -80,12 +118,45 @@ def test_shared_users_batch_unions_only_owned(client, patch_contract, auth_token
     patch_contract(
         owners={"cidA": OWNER, "cidB": OWNER, "cidC": RECIPIENT},
         shared={"cidA": [RECIPIENT], "cidB": [RECIPIENT], "cidC": ["0xdead"]},
+        permissions={("cidA", RECIPIENT): READ, ("cidB", RECIPIENT): READ},
     )
     r = client.post("/shared-users-batch",
                     json={"cids": ["cidA", "cidB", "cidC"], "user_address": OWNER},
                     headers={"x-auth-token": auth_token(OWNER)})
     assert r.status_code == 200
-    assert r.json() == {"shared_with": [RECIPIENT]}
+    assert r.json() == {"shared_with": [{"address": RECIPIENT, "expires_at_block": None}]}
+
+
+def test_shared_users_batch_shows_the_soonest_expiry_across_the_folder(client, patch_contract, auth_token):
+    # RECIPIENT has a permanent grant on cidA but a time-limited one on cidB
+    # -- the folder should report the soonest deadline, not hide it behind
+    # the permanent grant on the other file.
+    patch_contract(
+        owners={"cidA": OWNER, "cidB": OWNER},
+        shared={"cidA": [RECIPIENT], "cidB": [RECIPIENT]},
+        permissions={("cidA", RECIPIENT): READ, ("cidB", RECIPIENT): READ},
+        expires={("cidB", RECIPIENT): 300},  # cidA has no entry -> permanent
+    )
+    r = client.post("/shared-users-batch",
+                    json={"cids": ["cidA", "cidB"], "user_address": OWNER},
+                    headers={"x-auth-token": auth_token(OWNER)})
+    assert r.status_code == 200
+    assert r.json() == {"shared_with": [{"address": RECIPIENT, "expires_at_block": 300}]}
+
+
+def test_shared_users_batch_excludes_expired_grants(client, patch_contract, auth_token):
+    # RECIPIENT's grant on cidA is still active, but has expired on cidB --
+    # only cidA's grant should count toward the union.
+    patch_contract(
+        owners={"cidA": OWNER, "cidB": OWNER},
+        shared={"cidA": [RECIPIENT], "cidB": [RECIPIENT]},
+        permissions={("cidA", RECIPIENT): READ},  # cidB has no entry -> 0 -> expired
+    )
+    r = client.post("/shared-users-batch",
+                    json={"cids": ["cidA", "cidB"], "user_address": OWNER},
+                    headers={"x-auth-token": auth_token(OWNER)})
+    assert r.status_code == 200
+    assert r.json() == {"shared_with": [{"address": RECIPIENT, "expires_at_block": None}]}
 
 
 # --- the recipient list is private to the owner ---------------------------
@@ -119,12 +190,13 @@ def test_shared_users_batch_without_token_is_401(client, patch_contract):
 def test_shared_users_batch_needs_no_user_address(client, patch_contract, auth_token):
     # The endpoint reads the caller from the token, so a body of cids alone is
     # complete. It borrowed DeleteBatchRequest once, which made this a 422.
-    patch_contract(owners={"cidA": OWNER}, shared={"cidA": [RECIPIENT]})
+    patch_contract(owners={"cidA": OWNER}, shared={"cidA": [RECIPIENT]},
+                    permissions={("cidA", RECIPIENT): READ})
     r = client.post("/shared-users-batch",
                     json={"cids": ["cidA"]},
                     headers={"x-auth-token": auth_token(OWNER)})
     assert r.status_code == 200
-    assert r.json() == {"shared_with": [RECIPIENT]}
+    assert r.json() == {"shared_with": [{"address": RECIPIENT, "expires_at_block": None}]}
 
 
 # Older clients still send user_address; unknown fields must stay tolerated,

@@ -40,13 +40,18 @@ contract FileStorage {
     // CID => (user address => permission bitmask)
     mapping(string => mapping(address => uint256)) private _permissions;
 
+    // cid => user => absolute block number after which access is denied.
+    // 0 = no expiry (permanent grant). Matches existing plain grant() behavior
+    // since a mapping's default value is 0 -- no migration needed for old grants.
+    mapping(string => mapping(address => uint256)) private _expiresAtBlock;
+
     // can attach this to functions to save time later
     modifier onlyFileOwner(string memory cid) {
         require(msg.sender == fileOwner[cid], "Not file owner");
         _;
     }
 
-    function _grant(string memory cid, address user, uint256 grantMask)
+    function _grant(string memory cid, address user, uint256 grantMask, uint256 durationBlocks)
         internal
         onlyFileOwner(cid)
     {
@@ -58,18 +63,38 @@ contract FileStorage {
         }
 
         _permissions[cid][user] = _permissions[cid][user] | grantMask;
+        // Last grant call always wins on expiry: a fresh grant() call resets
+        // the grant to permanent even if a prior grantWithExpiry() had set one;
+        // a fresh grantWithExpiry() call always restarts the clock from now.
+        _expiresAtBlock[cid][user] = durationBlocks == 0 ? 0 : block.number + durationBlocks;
         emit PermissionGranted(cid, user, grantMask);
     }
 
     function grant(string memory cid, address user, uint256 grantMask) external {
-        _grant(cid, user, grantMask);
+        _grant(cid, user, grantMask, 0);
     }
 
     // Batch grant: share many files with one user in one transaction (folder share).
     // Caller must own every cid.
     function grantFiles(string[] memory cids, address user, uint256 grantMask) external {
         for (uint256 i = 0; i < cids.length; i++) {
-            _grant(cids[i], user, grantMask);
+            _grant(cids[i], user, grantMask, 0);
+        }
+    }
+
+    // Same as grant, but access is automatically denied once block.number
+    // reaches block.number + durationBlocks (computed here, at grant time,
+    // so it can't go stale between building and mining the transaction).
+    function grantWithExpiry(string memory cid, address user, uint256 grantMask, uint256 durationBlocks) external {
+        require(durationBlocks > 0, "Use grant() for permanent access");
+        _grant(cid, user, grantMask, durationBlocks);
+    }
+
+    // Batch version of grantWithExpiry.
+    function grantWithExpiryFiles(string[] memory cids, address user, uint256 grantMask, uint256 durationBlocks) external {
+        require(durationBlocks > 0, "Use grantFiles() for permanent access");
+        for (uint256 i = 0; i < cids.length; i++) {
+            _grant(cids[i], user, grantMask, durationBlocks);
         }
     }
 
@@ -80,6 +105,11 @@ contract FileStorage {
         _permissions[cid][user] = _permissions[cid][user] & ~revokeMask;
 
         if(_permissions[cid][user] == 0) {
+            // storage hygiene only: an expired-but-nonzero _permissions value
+            // is already masked to 0 by _effectivePermissions regardless of
+            // _expiresAtBlock, so this just avoids leaving stale expiry data.
+            delete _expiresAtBlock[cid][user];
+
             // remove cid from sharedFiles[user]
             string[] storage files = sharedFiles[user];
             uint256 ulen = files.length;
@@ -104,7 +134,7 @@ contract FileStorage {
                 }
             }
         }
-        
+
         emit PermissionRevoked(cid, user, revokeMask);
     }
 
@@ -120,13 +150,24 @@ contract FileStorage {
         }
     }
 
+    // Single choke point for expiry: a live block.number comparison on every
+    // read, not a stored flag or a cleanup job. Once expired, this returns 0
+    // regardless of what's still sitting in _permissions.
+    function _effectivePermissions(string memory cid, address user) internal view returns (uint256) {
+        uint256 exp = _expiresAtBlock[cid][user];
+        if (exp != 0 && block.number >= exp) {
+            return 0;
+        }
+        return _permissions[cid][user];
+    }
+
     // Permission Query Functions -> from Yanchen
     function getPermissions(string memory cid, address user)
         external
         view
         returns (uint256)
     {
-        return _permissions[cid][user];
+        return _effectivePermissions(cid, user);
     }
 
     // check if target has same bitmask as requiredMask
@@ -135,7 +176,7 @@ contract FileStorage {
         view
         returns (bool)
     {
-        return (_permissions[cid][user] & requiredMask) == requiredMask;
+        return (_effectivePermissions(cid, user) & requiredMask) == requiredMask;
     }
 
     // check if target has at least 1 bit as anyMask
@@ -144,7 +185,14 @@ contract FileStorage {
         view
         returns (bool)
     {
-        return (_permissions[cid][user] & anyMask) != 0;
+        return (_effectivePermissions(cid, user) & anyMask) != 0;
+    }
+
+    // 0 = permanent grant (or no grant at all). Frontend/backend converts
+    // this to a human ETA using whatever blocks/sec assumption it wants --
+    // that conversion intentionally lives entirely outside this contract.
+    function getExpiresAtBlock(string memory cid, address user) external view returns (uint256) {
+        return _expiresAtBlock[cid][user];
     }
 
     // Permission helper functions (return if a user has a certain permission for a given file)
@@ -277,6 +325,7 @@ contract FileStorage {
             }
 
             delete _permissions[cid][user]; // clearing permissions per user
+            delete _expiresAtBlock[cid][user];
         }
 
 

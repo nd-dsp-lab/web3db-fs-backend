@@ -46,11 +46,12 @@ class FakeContract:
     (the cid), matching how the app calls getFileOwner / getPermissions / etc.
     """
 
-    def __init__(self, owners=None, shared=None, permissions=None, user_files=None):
+    def __init__(self, owners=None, shared=None, permissions=None, user_files=None, expires=None):
         self._owners = owners or {}
         self._shared = shared or {}
         self._permissions = permissions or {}
         self._user_files = user_files or []
+        self._expires = expires or {}
         self.functions = self  # app calls contract.functions.X(...)
 
     def getFileOwner(self, cid):
@@ -61,6 +62,9 @@ class FakeContract:
 
     def getPermissions(self, cid, user):
         return SimpleNamespace(call=lambda: self._permissions.get((cid, user), 0))
+
+    def getExpiresAtBlock(self, cid, user):
+        return SimpleNamespace(call=lambda: self._expires.get((cid, user), 0))
 
     def getUserFiles(self, user):
         return SimpleNamespace(call=lambda: list(self._user_files))

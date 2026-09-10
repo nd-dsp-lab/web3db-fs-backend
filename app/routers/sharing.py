@@ -15,6 +15,7 @@ from models import (
     ShareRequest,
     UnshareRequest,
     ShareBatchRequest,
+    UnshareBatchRequest,
     NotifyShareRequest,
     ResolveRecipientRequest,
     CidBatchRequest,
@@ -162,7 +163,7 @@ async def resolve_recipient(request: ResolveRecipientRequest):
 @router.post("/share")
 def share_file(request: ShareRequest):
     try:
-        txn = prepare_share_transaction(request.cid, request.to_address, request.user_address)
+        txn = prepare_share_transaction(request.cid, request.to_address, request.user_address, request.duration_blocks)
         return {"transaction": txn}
     except Exception as e:
         logger.error("Failed to prepare share transaction: %s", e)
@@ -173,7 +174,7 @@ def share_file(request: ShareRequest):
 @router.post("/share-batch")
 def share_batch(request: ShareBatchRequest):
     try:
-        txn, count = prepare_share_batch_transaction(request.cids, request.to_address, request.user_address)
+        txn, count = prepare_share_batch_transaction(request.cids, request.to_address, request.user_address, request.duration_blocks)
         if txn is None:
             return JSONResponse(status_code=400, content={"error": "No owned files to share"})
         return {"transaction": txn, "count": count}
@@ -184,7 +185,7 @@ def share_batch(request: ShareBatchRequest):
 
 # Batch unshare (folder unshare): one revokeFiles tx covering many cids
 @router.post("/unshare-batch")
-def unshare_batch(request: ShareBatchRequest):
+def unshare_batch(request: UnshareBatchRequest):
     try:
         txn, count = prepare_unshare_batch_transaction(request.cids, request.to_address, request.user_address)
         if txn is None:
@@ -218,8 +219,20 @@ def get_shared_users(cid: str, x_auth_token: Optional[str] = Header(None)):
     try:
         owner = contract.functions.getFileOwner(cid).call()
         if owner.lower() == requester.lower():
-            shared_users = contract.functions.getSharedUsers(cid).call()
-            return {"shared_with": shared_users}
+            # getSharedUsers returns every address ever granted access,
+            # expired or not; getPermissions is already expiry-aware (0 once
+            # _expiresAtBlock has passed), so re-check each one against it
+            # rather than trusting the raw list. expires_at_block is the
+            # absolute block number the UI shows directly (0 -> None means
+            # permanent) -- deliberately not a "blocks remaining" countdown,
+            # which would go stale the moment it's rendered.
+            shared_with = []
+            for addr in contract.functions.getSharedUsers(cid).call():
+                if contract.functions.getPermissions(cid, addr).call() == 0:
+                    continue
+                expires_at = contract.functions.getExpiresAtBlock(cid, addr).call()
+                shared_with.append({"address": addr, "expires_at_block": expires_at or None})
+            return {"shared_with": shared_with}
         else:
             return {"shared_by": owner}
     except Exception as e:
@@ -237,14 +250,28 @@ def get_shared_users_batch(request: CidBatchRequest, x_auth_token: Optional[str]
         logger.warning("shared-users-batch denied: missing or invalid auth token")
         return JSONResponse(status_code=401, content={"error": "Missing or invalid auth token"})
     try:
-        users = set()
+        best = {}  # address -> expires_at_block (None = permanent)
         for cid in request.cids:
             owner = contract.functions.getFileOwner(cid).call()
             if owner.lower() != requester.lower():
                 continue
             for u in contract.functions.getSharedUsers(cid).call():
-                users.add(u)
-        return {"shared_with": sorted(users)}
+                # Same expiry check as the single-file endpoint, applied per
+                # cid: a user only counts as "shared with" if their access to
+                # *this* cid is still active right now.
+                if contract.functions.getPermissions(cid, u).call() == 0:
+                    continue
+                expires_at = contract.functions.getExpiresAtBlock(cid, u).call() or None
+                if u not in best:
+                    best[u] = expires_at
+                elif expires_at is not None and (best[u] is None or expires_at < best[u]):
+                    # A folder is a union of files that may each have a
+                    # different expiry for this user -- show the soonest
+                    # deadline so a permanent grant on one file never hides a
+                    # soon-to-expire grant on another.
+                    best[u] = expires_at
+        shared_with = [{"address": addr, "expires_at_block": best[addr]} for addr in sorted(best)]
+        return {"shared_with": shared_with}
     except Exception as e:
         logger.error("Error fetching shared users batch: %s", e)
         return {"shared_with": [], "error": str(e)}

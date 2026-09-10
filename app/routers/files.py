@@ -74,12 +74,40 @@ def get_files(user_address: str = None):
         except Exception:
             permissions = 0
 
+        # A shared (non-owned) file whose access has expired (or been
+        # revoked) isn't "shared with me" anymore. getUserFiles keeps
+        # returning the cid regardless -- it's a list, not a permission
+        # check -- but getPermissions is already expiry-aware (0 once
+        # _expiresAtBlock has passed), so it's the single source of truth
+        # for whether this share is still actually active.
+        if not is_owner and permissions == 0:
+            continue
+
+        # A recipient needs to know their access is on a clock at all --
+        # otherwise a shared file just vanishes later with no warning.
+        # Owner's own permissions are set directly in _uploadFile, never
+        # through _grant, so they never carry an expiry.
+        expires_at_block = None
+        if not is_owner:
+            try:
+                expires_at_block = contract.functions.getExpiresAtBlock(cid, user_address).call() or None
+            except Exception as e:
+                logger.warning("getExpiresAtBlock failed for %s/%s: %s", cid, user_address, e)
+
         # Who the file is shared with (owner only) — drives the Sharing
-        # column and the shared-folder icon (folder = intersection of these)
+        # column and the shared-folder icon (folder = intersection of these).
+        # Filtered the same way: getSharedUsers returns every address ever
+        # granted, expired or not, so each is re-checked against the
+        # expiry-aware getPermissions before being shown as still shared.
         shared_with = []
         if is_owner:
             try:
-                shared_with = contract.functions.getSharedUsers(cid).call()
+                for addr in contract.functions.getSharedUsers(cid).call():
+                    try:
+                        if contract.functions.getPermissions(cid, addr).call() != 0:
+                            shared_with.append(addr)
+                    except Exception as e:
+                        logger.warning("getPermissions failed for %s/%s: %s", cid, addr, e)
             except Exception as e:
                 logger.warning("getSharedUsers failed for %s: %s", cid, e)
 
@@ -92,6 +120,7 @@ def get_files(user_address: str = None):
             "owner": owner,
             "is_owner": is_owner,
             "permissions": permissions,
+            "expires_at_block": expires_at_block,
             "shared_with": shared_with,
             "size": get_file_size(cid),
             "ipfs_url": f"{IPFS_GATEWAY_URL}/{cid}"

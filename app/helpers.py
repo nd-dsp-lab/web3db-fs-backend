@@ -68,16 +68,22 @@ def prepare_upload_transaction(cid: str, full_path: str, user_address: str, file
         raise
 
 
-# preparing a share transaction for owner to sign
-def prepare_share_transaction(cid: str, to_address: str, user_address: str):
+# preparing a share transaction for owner to sign. duration_blocks is a
+# relative block count converted to an absolute expiry on-chain, at grant
+# time (see grantWithExpiry in FileStorage.sol) -- never precomputed here,
+# so it can't go stale between building and mining the transaction.
+def prepare_share_transaction(cid: str, to_address: str, user_address: str, duration_blocks: Optional[int] = None):
     try:
         user_address = Web3.to_checksum_address(user_address)
         to_address = Web3.to_checksum_address(to_address)
         _assert_owner(cid, user_address, "share")
 
-        logger.info("Sharing CID %s with %s using mask %s", cid, to_address, SHARE_MASK)
-        txn = contract.functions.grant(cid, to_address, SHARE_MASK).build_transaction(
-            _base_tx(user_address))
+        logger.info("Sharing CID %s with %s using mask %s duration_blocks=%s", cid, to_address, SHARE_MASK, duration_blocks)
+        if duration_blocks:
+            fn = contract.functions.grantWithExpiry(cid, to_address, SHARE_MASK, duration_blocks)
+        else:
+            fn = contract.functions.grant(cid, to_address, SHARE_MASK)
+        txn = fn.build_transaction(_base_tx(user_address))
         return txn
     except Exception as e:
         logger.error("Share transaction preparation failed: %s", e)
@@ -86,7 +92,7 @@ def prepare_share_transaction(cid: str, to_address: str, user_address: str):
 
 # Batch share: one grantFiles(cids, to, mask) tx for folder share.
 # Filters to cids the caller owns; returns (txn, count) or (None, 0).
-def prepare_share_batch_transaction(cids: list[str], to_address: str, user_address: str):
+def prepare_share_batch_transaction(cids: list[str], to_address: str, user_address: str, duration_blocks: Optional[int] = None):
     try:
         user_address = Web3.to_checksum_address(user_address)
         to_address = Web3.to_checksum_address(to_address)
@@ -96,7 +102,10 @@ def prepare_share_batch_transaction(cids: list[str], to_address: str, user_addre
             return None, 0
 
         base_txn = _base_tx(user_address)
-        fn = contract.functions.grantFiles(owned, to_address, SHARE_MASK)
+        if duration_blocks:
+            fn = contract.functions.grantWithExpiryFiles(owned, to_address, SHARE_MASK, duration_blocks)
+        else:
+            fn = contract.functions.grantFiles(owned, to_address, SHARE_MASK)
         base_txn['gas'] = int(fn.estimate_gas(base_txn) * 1.1)
         return fn.build_transaction(base_txn), len(owned)
     except Exception as e:

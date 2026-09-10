@@ -96,6 +96,21 @@ def test_share_tx_refuses_non_owner(patch_helpers):
         helpers.prepare_share_transaction("cidA", RECIPIENT, OWNER)
 
 
+def test_share_tx_with_duration_calls_grant_with_expiry(patch_helpers):
+    patch_helpers(owners={"cidA": OWNER})
+    tx = helpers.prepare_share_transaction("cidA", RECIPIENT, OWNER, duration_blocks=100)
+    assert tx["_fn"] == "grantWithExpiry"
+    assert tx["_args"] == ("cidA", Web3.to_checksum_address(RECIPIENT), READ | DOWNLOAD, 100)
+
+
+def test_share_tx_without_duration_still_calls_plain_grant(patch_helpers):
+    # None/omitted and 0 must both mean "permanent" -> plain grant(), never
+    # grantWithExpiry(..., 0), which the contract itself rejects.
+    patch_helpers(owners={"cidA": OWNER})
+    tx = helpers.prepare_share_transaction("cidA", RECIPIENT, OWNER, duration_blocks=0)
+    assert tx["_fn"] == "grant"
+
+
 def test_unshare_tx_revokes_the_same_mask_it_granted(patch_helpers):
     patch_helpers(owners={"cidA": OWNER})
     tx = helpers.prepare_unshare_transaction("cidA", RECIPIENT, OWNER)
@@ -131,6 +146,15 @@ def test_share_batch_returns_none_when_nothing_owned(patch_helpers):
     contract, _ = patch_helpers(owners={"a": OTHER})
     assert helpers.prepare_share_batch_transaction(["a"], RECIPIENT, OWNER) == (None, 0)
     assert contract.built == [], "must not touch the chain when there is nothing to do"
+
+
+def test_share_batch_with_duration_calls_grant_with_expiry_files(patch_helpers):
+    contract, _ = patch_helpers(owners={"a": OWNER, "b": OWNER}, gas_estimate=100_000)
+    tx, count = helpers.prepare_share_batch_transaction(["a", "b"], RECIPIENT, OWNER, duration_blocks=50)
+    assert count == 2
+    assert tx["_fn"] == "grantWithExpiryFiles"
+    assert tx["_args"][-1] == 50
+    assert contract.estimates[0][0] == "grantWithExpiryFiles"
 
 
 def test_unshare_batch_filters_to_owned(patch_helpers):
