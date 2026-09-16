@@ -633,6 +633,138 @@ describe("FileStorage", function () {
     });
   });
 
+  describe("grantWithExpiry", function () {
+    let testCID;
+
+    beforeEach(async function () {
+      testCID = "QmTestExpiry";
+      await fileStorage.uploadFile(testCID, "test.txt", "text/plain");
+    });
+
+    it("Should grant access that is valid before the expiry block", async function () {
+      await fileStorage.grantWithExpiry(testCID, user1.address, READ | DOWNLOAD, 5);
+
+      expect(await fileStorage.canRead(testCID, user1.address)).to.be.true;
+      expect(Number(await fileStorage.getPermissions(testCID, user1.address))).to.equal(READ | DOWNLOAD);
+    });
+
+    it("Should deny access once the expiry block has passed", async function () {
+      await fileStorage.grantWithExpiry(testCID, user1.address, READ | DOWNLOAD, 3);
+
+      // mine past the expiry block
+      for (let i = 0; i < 5; i++) {
+        await ethers.provider.send("evm_mine");
+      }
+
+      expect(await fileStorage.canRead(testCID, user1.address)).to.be.false;
+      expect(await fileStorage.canDownload(testCID, user1.address)).to.be.false;
+      expect(Number(await fileStorage.getPermissions(testCID, user1.address))).to.equal(0);
+      expect(await fileStorage.hasAny(testCID, user1.address, READ | DOWNLOAD)).to.be.false;
+    });
+
+    it("Should deny access at exactly the expiry block (>=, not >)", async function () {
+      const tx = await fileStorage.grantWithExpiry(testCID, user1.address, READ, 2);
+      await tx.wait();
+      const grantBlock = await ethers.provider.getBlockNumber();
+
+      // mine exactly up to grantBlock + 2
+      while ((await ethers.provider.getBlockNumber()) < grantBlock + 2) {
+        await ethers.provider.send("evm_mine");
+      }
+
+      expect(await fileStorage.canRead(testCID, user1.address)).to.be.false;
+    });
+
+    it("Should require durationBlocks > 0", async function () {
+      await expect(
+        fileStorage.grantWithExpiry(testCID, user1.address, READ, 0)
+      ).to.be.revertedWith("Use grant() for permanent access");
+    });
+
+    it("Permanent grant() should still work forever regardless of blocks mined", async function () {
+      await fileStorage.grant(testCID, user1.address, READ);
+
+      for (let i = 0; i < 10; i++) {
+        await ethers.provider.send("evm_mine");
+      }
+
+      expect(await fileStorage.canRead(testCID, user1.address)).to.be.true;
+      expect(await fileStorage.getExpiresAtBlock(testCID, user1.address)).to.equal(0);
+    });
+
+    it("Should restart the clock when re-granting with a new expiry", async function () {
+      await fileStorage.grantWithExpiry(testCID, user1.address, READ, 3);
+      const firstExpiry = await fileStorage.getExpiresAtBlock(testCID, user1.address);
+
+      await ethers.provider.send("evm_mine");
+      await ethers.provider.send("evm_mine");
+
+      // re-share before the first grant expires
+      const tx = await fileStorage.grantWithExpiry(testCID, user1.address, READ, 10);
+      await tx.wait();
+      const secondExpiry = await fileStorage.getExpiresAtBlock(testCID, user1.address);
+
+      expect(secondExpiry).to.be.greaterThan(firstExpiry);
+      expect(await fileStorage.canRead(testCID, user1.address)).to.be.true;
+    });
+
+    it("A plain grant() after grantWithExpiry should reset the grant to permanent", async function () {
+      await fileStorage.grantWithExpiry(testCID, user1.address, READ, 2);
+      await fileStorage.grant(testCID, user1.address, READ);
+
+      for (let i = 0; i < 5; i++) {
+        await ethers.provider.send("evm_mine");
+      }
+
+      expect(await fileStorage.canRead(testCID, user1.address)).to.be.true;
+      expect(await fileStorage.getExpiresAtBlock(testCID, user1.address)).to.equal(0);
+    });
+
+    it("Should only allow file owner to call grantWithExpiry", async function () {
+      await expect(
+        fileStorage.connect(user1).grantWithExpiry(testCID, user2.address, READ, 5)
+      ).to.be.revertedWith("Not file owner");
+    });
+
+    it("Should support batch expiry grants via grantWithExpiryFiles", async function () {
+      await fileStorage.uploadFile("QmExpiryB1", "/a.txt", "txt");
+      await fileStorage.uploadFile("QmExpiryB2", "/b.txt", "txt");
+
+      await fileStorage.grantWithExpiryFiles(["QmExpiryB1", "QmExpiryB2"], user1.address, READ, 3);
+      expect(await fileStorage.canRead("QmExpiryB1", user1.address)).to.be.true;
+      expect(await fileStorage.canRead("QmExpiryB2", user1.address)).to.be.true;
+
+      for (let i = 0; i < 5; i++) {
+        await ethers.provider.send("evm_mine");
+      }
+
+      expect(await fileStorage.canRead("QmExpiryB1", user1.address)).to.be.false;
+      expect(await fileStorage.canRead("QmExpiryB2", user1.address)).to.be.false;
+    });
+
+    it("Should require durationBlocks > 0 for grantWithExpiryFiles", async function () {
+      await expect(
+        fileStorage.grantWithExpiryFiles([testCID], user1.address, READ, 0)
+      ).to.be.revertedWith("Use grantFiles() for permanent access");
+    });
+
+    it("Owner's own access is never subject to expiry", async function () {
+      // owner permissions are set directly in _uploadFile, never through _grant
+      expect(await fileStorage.getExpiresAtBlock(testCID, owner.address)).to.equal(0);
+      for (let i = 0; i < 5; i++) {
+        await ethers.provider.send("evm_mine");
+      }
+      expect(await fileStorage.canRead(testCID, owner.address)).to.be.true;
+    });
+
+    it("Should clear expiry data once a user is fully revoked", async function () {
+      await fileStorage.grantWithExpiry(testCID, user1.address, READ, 5);
+      await fileStorage.revoke(testCID, user1.address, READ);
+
+      expect(await fileStorage.getExpiresAtBlock(testCID, user1.address)).to.equal(0);
+    });
+  });
+
   describe("Integration Tests", function () {
     it("Should handle complete file sharing workflow", async function () {
       // Owner uploads file

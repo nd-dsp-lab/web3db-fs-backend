@@ -9,6 +9,7 @@ class ShareRequest(BaseModel):
     cid: str
     to_address: str
     user_address: str
+    duration_blocks: Optional[int] = None   # None/omitted = permanent
 
 class UnshareRequest(BaseModel):
     cid: str
@@ -58,6 +59,12 @@ class MoveBatchRequest(BaseModel):
     user_address: str
 
 class ShareBatchRequest(BaseModel):
+    cids: List[str]
+    to_address: str
+    user_address: str
+    duration_blocks: Optional[int] = None   # None/omitted = permanent
+
+class UnshareBatchRequest(BaseModel):
     cids: List[str]
     to_address: str
     user_address: str
