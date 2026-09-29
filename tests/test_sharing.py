@@ -68,7 +68,7 @@ def test_shared_users_owner_sees_recipients(client, patch_contract, auth_token):
     r = client.get("/shared-users", params={"cid": "cidA"},
                    headers={"x-auth-token": auth_token(OWNER)})
     assert r.status_code == 200
-    assert r.json() == {"shared_with": [{"address": RECIPIENT, "expires_at_block": None}]}
+    assert r.json() == {"shared_with": [{"address": RECIPIENT, "expires_at_block": None, "lapsed": False}]}
 
 
 def test_shared_users_reports_the_expiry_block_for_a_time_limited_grant(client, patch_contract, auth_token):
@@ -78,21 +78,26 @@ def test_shared_users_reports_the_expiry_block_for_a_time_limited_grant(client, 
     r = client.get("/shared-users", params={"cid": "cidA"},
                    headers={"x-auth-token": auth_token(OWNER)})
     assert r.status_code == 200
-    assert r.json() == {"shared_with": [{"address": RECIPIENT, "expires_at_block": 500}]}
+    assert r.json() == {"shared_with": [{"address": RECIPIENT, "expires_at_block": 500, "lapsed": False}]}
 
 
 # getSharedUsers lists every address ever granted access, expired or not --
 # it's only cleaned up on an explicit revoke, never by expiry (the "filter,
-# not cleanup" design: nothing ever runs at the expiry block itself). So a
-# recipient whose grant has expired must not show up here even though the
-# raw on-chain list still names them; getPermissions is the expiry-aware
-# source of truth (0 once _expiresAtBlock has passed), used here to filter.
-def test_shared_users_excludes_a_recipient_whose_access_has_expired(client, patch_contract, auth_token):
-    patch_contract(owners={"cidA": OWNER}, shared={"cidA": [RECIPIENT]})  # no permissions entry -> getPermissions returns 0
+# not cleanup" design: nothing ever runs at the expiry block itself).
+#
+# These used to be dropped, which made someone whose access ran out vanish
+# from "People with access" with no trace they were ever there. They are now
+# listed and flagged, so the owner can see who lapsed and when. Someone
+# *revoked* still disappears, correctly: _revoke removes them from
+# getSharedUsers outright, so this code never has to tell the cases apart.
+def test_shared_users_lists_a_lapsed_recipient_with_the_block_it_ended(client, patch_contract, auth_token):
+    patch_contract(owners={"cidA": OWNER}, shared={"cidA": [RECIPIENT]},
+                   expires={("cidA", RECIPIENT): 500})  # no permissions entry -> 0 -> lapsed
     r = client.get("/shared-users", params={"cid": "cidA"},
                    headers={"x-auth-token": auth_token(OWNER)})
     assert r.status_code == 200
-    assert r.json() == {"shared_with": []}
+    assert r.json() == {"shared_with": [
+        {"address": RECIPIENT, "expires_at_block": 500, "lapsed": True}]}
 
 
 def test_shared_users_returns_objects_not_bare_addresses(client, patch_contract, auth_token):
@@ -103,7 +108,7 @@ def test_shared_users_returns_objects_not_bare_addresses(client, patch_contract,
     r = client.get("/shared-users", params={"cid": "cidA"},
                    headers={"x-auth-token": auth_token(OWNER)})
     entry = r.json()["shared_with"][0]
-    assert set(entry.keys()) == {"address", "expires_at_block"}
+    assert set(entry.keys()) == {"address", "expires_at_block", "lapsed"}
 
 
 def test_shared_users_non_owner_sees_sharer(client, patch_contract, auth_token):
@@ -124,7 +129,7 @@ def test_shared_users_batch_unions_only_owned(client, patch_contract, auth_token
                     json={"cids": ["cidA", "cidB", "cidC"], "user_address": OWNER},
                     headers={"x-auth-token": auth_token(OWNER)})
     assert r.status_code == 200
-    assert r.json() == {"shared_with": [{"address": RECIPIENT, "expires_at_block": None}]}
+    assert r.json() == {"shared_with": [{"address": RECIPIENT, "expires_at_block": None, "lapsed": False}]}
 
 
 def test_shared_users_batch_shows_the_soonest_expiry_across_the_folder(client, patch_contract, auth_token):
@@ -141,22 +146,40 @@ def test_shared_users_batch_shows_the_soonest_expiry_across_the_folder(client, p
                     json={"cids": ["cidA", "cidB"], "user_address": OWNER},
                     headers={"x-auth-token": auth_token(OWNER)})
     assert r.status_code == 200
-    assert r.json() == {"shared_with": [{"address": RECIPIENT, "expires_at_block": 300}]}
+    assert r.json() == {"shared_with": [{"address": RECIPIENT, "expires_at_block": 300, "lapsed": False}]}
 
 
-def test_shared_users_batch_excludes_expired_grants(client, patch_contract, auth_token):
-    # RECIPIENT's grant on cidA is still active, but has expired on cidB --
-    # only cidA's grant should count toward the union.
+def test_shared_users_batch_counts_partial_folder_access_as_still_active(client, patch_contract, auth_token):
+    # A folder is a union, so RECIPIENT can be live on cidA and lapsed on
+    # cidB. They can still open part of the folder, so calling them "expired"
+    # would be its own kind of wrong -- lapsed means lapsed on everything.
     patch_contract(
         owners={"cidA": OWNER, "cidB": OWNER},
         shared={"cidA": [RECIPIENT], "cidB": [RECIPIENT]},
-        permissions={("cidA", RECIPIENT): READ},  # cidB has no entry -> 0 -> expired
+        permissions={("cidA", RECIPIENT): READ},  # cidB has no entry -> 0 -> lapsed there
     )
     r = client.post("/shared-users-batch",
                     json={"cids": ["cidA", "cidB"], "user_address": OWNER},
                     headers={"x-auth-token": auth_token(OWNER)})
     assert r.status_code == 200
-    assert r.json() == {"shared_with": [{"address": RECIPIENT, "expires_at_block": None}]}
+    assert r.json() == {"shared_with": [
+        {"address": RECIPIENT, "expires_at_block": None, "lapsed": False}]}
+
+
+def test_shared_users_batch_marks_lapsed_only_when_every_file_has_run_out(client, patch_contract, auth_token):
+    patch_contract(
+        owners={"cidA": OWNER, "cidB": OWNER},
+        shared={"cidA": [RECIPIENT], "cidB": [RECIPIENT]},
+        expires={("cidA", RECIPIENT): 300, ("cidB", RECIPIENT): 500},
+        # no permissions entries at all -> 0 everywhere -> lapsed throughout
+    )
+    r = client.post("/shared-users-batch",
+                    json={"cids": ["cidA", "cidB"], "user_address": OWNER},
+                    headers={"x-auth-token": auth_token(OWNER)})
+    assert r.status_code == 200
+    # soonest deadline still wins, as it does for a live grant
+    assert r.json() == {"shared_with": [
+        {"address": RECIPIENT, "expires_at_block": 300, "lapsed": True}]}
 
 
 # --- the recipient list is private to the owner ---------------------------
@@ -196,7 +219,8 @@ def test_shared_users_batch_needs_no_user_address(client, patch_contract, auth_t
                     json={"cids": ["cidA"]},
                     headers={"x-auth-token": auth_token(OWNER)})
     assert r.status_code == 200
-    assert r.json() == {"shared_with": [{"address": RECIPIENT, "expires_at_block": None}]}
+    assert r.json() == {"shared_with": [
+        {"address": RECIPIENT, "expires_at_block": None, "lapsed": False}]}
 
 
 # Older clients still send user_address; unknown fields must stay tolerated,
@@ -459,3 +483,222 @@ def test_notify_share_send_failure_is_502(client, smtp):
     r = client.post("/notify-share", json={
         "recipient_email": "a@b.com", "sharer": "showkot", "filename": "a.pdf"})
     assert r.status_code == 502
+
+
+# --- access extension requests ---
+# The recipient of an expired share asks for more time; the owner resolves it.
+# These endpoints only prepare transactions, so the tests here are about
+# routing, ownership refusal, and who the caller is allowed to be.
+
+def test_request_extension_prepares_a_transaction(client, monkeypatch):
+    monkeypatch.setattr(sharing, "prepare_request_access_transaction", lambda *a: {"to": "signer"})
+    r = client.post("/request-extension",
+                    json={"cid": "cidA", "duration_blocks": 50, "user_address": RECIPIENT})
+    assert r.status_code == 200
+    assert r.json() == {"transaction": {"to": "signer"}}
+
+
+def test_approve_request_prepares_a_transaction(client, monkeypatch):
+    seen = {}
+    def fake(cid, requester, user_address, duration_blocks):
+        seen.update(cid=cid, requester=requester, user=user_address, duration=duration_blocks)
+        return {"to": "signer"}
+    monkeypatch.setattr(sharing, "prepare_approve_request_transaction", fake)
+
+    r = client.post("/approve-request", json={
+        "cid": "cidA", "requester": RECIPIENT, "duration_blocks": 100, "user_address": OWNER})
+    assert r.status_code == 200
+    # the owner's duration is what gets used, not whatever was asked for
+    assert seen == {"cid": "cidA", "requester": RECIPIENT, "user": OWNER, "duration": 100}
+
+
+def test_approve_request_by_a_non_owner_is_403(client, monkeypatch):
+    from helpers import NotOwnerError
+    def boom(*a):
+        raise NotOwnerError("Only file owner can approve a request for file.")
+    monkeypatch.setattr(sharing, "prepare_approve_request_transaction", boom)
+
+    r = client.post("/approve-request", json={
+        "cid": "cidA", "requester": RECIPIENT, "duration_blocks": 100, "user_address": RECIPIENT})
+    assert r.status_code == 403
+
+
+def test_deny_request_by_a_non_owner_is_403(client, monkeypatch):
+    from helpers import NotOwnerError
+    def boom(*a):
+        raise NotOwnerError("Only file owner can deny a request for file.")
+    monkeypatch.setattr(sharing, "prepare_deny_request_transaction", boom)
+
+    r = client.post("/deny-request",
+                    json={"cid": "cidA", "requester": RECIPIENT, "user_address": RECIPIENT})
+    assert r.status_code == 403
+
+
+def test_cancel_request_prepares_a_transaction(client, monkeypatch):
+    monkeypatch.setattr(sharing, "prepare_cancel_request_transaction", lambda *a: {"to": "signer"})
+    r = client.post("/cancel-request", json={"cid": "cidA", "user_address": RECIPIENT})
+    assert r.status_code == 200
+
+
+def test_share_requests_needs_a_token(client, patch_contract):
+    patch_contract()
+    assert client.get("/share-requests").status_code == 401
+
+
+def test_share_requests_lists_pending_asks_for_the_token_holder(client, patch_contract, auth_token):
+    from web3 import Web3
+    owner_cs = Web3.to_checksum_address(OWNER)
+    patch_contract(
+        pending={owner_cs: [("cidA", RECIPIENT, 50, 900)]},
+        metadata={"cidA": "docs/report.pdf"},
+    )
+    r = client.get("/share-requests", headers={"x-auth-token": auth_token(OWNER)})
+    assert r.status_code == 200
+    assert r.json()["requests"] == [{
+        "cid": "cidA", "filename": "report.pdf", "requester": RECIPIENT,
+        "duration_blocks": 50, "requested_at_block": 900,
+    }]
+
+
+def test_share_requests_ignores_a_caller_supplied_address(client, patch_contract, auth_token):
+    # getPendingRequests takes an address, so trusting a query param would let
+    # anyone read anyone else's pending requests. The owner comes from the token.
+    from web3 import Web3
+    patch_contract(
+        pending={Web3.to_checksum_address(OWNER): [("cidA", RECIPIENT, 50, 900)]},
+        metadata={"cidA": "report.pdf"},
+    )
+    r = client.get("/share-requests",
+                   params={"user_address": OWNER},              # attacker's claim
+                   headers={"x-auth-token": auth_token(WALLET)})  # actual identity
+    assert r.status_code == 200
+    assert r.json()["requests"] == []
+
+
+def test_share_requests_skips_trashed_files(client, patch_contract, auth_token):
+    # Trashing is a moveFile, not a permission change, so the contract has no
+    # idea the file is in the trash and still reports the request.
+    from web3 import Web3
+    owner_cs = Web3.to_checksum_address(OWNER)
+    patch_contract(
+        pending={owner_cs: [("cidA", RECIPIENT, 50, 900), ("cidB", RECIPIENT, 10, 901)]},
+        metadata={"cidA": "/.trash/old.pdf", "cidB": "live.pdf"},
+    )
+    r = client.get("/share-requests", headers={"x-auth-token": auth_token(OWNER)})
+    assert [q["cid"] for q in r.json()["requests"]] == ["cidB"]
+
+
+# --- request-flow notification emails ---
+# Every party is read from the chain and the auth token, never from the body,
+# and nothing is sent unless the chain already agrees with what the caller
+# claims -- otherwise these are a way to mail someone on demand.
+
+@pytest.fixture
+def capture_email(monkeypatch):
+    sent = []
+    monkeypatch.setattr(sharing, "_send_email",
+                        lambda to, subject, body: sent.append((to, subject, body)))
+    monkeypatch.setattr(sharing, "_privy_email_for_address",
+                        lambda addr: f"{addr.lower()}@example.test")
+    return sent
+
+
+def test_notify_request_needs_a_token(client, patch_contract, capture_email):
+    patch_contract()
+    assert client.post("/notify-request", json={"cid": "cidA"}).status_code == 401
+    assert capture_email == []
+
+
+def test_notify_request_emails_the_owner(client, patch_contract, auth_token, capture_email):
+    from web3 import Web3
+    patch_contract(owners={"cidA": Web3.to_checksum_address(OWNER)},
+                   requests={("cidA", Web3.to_checksum_address(RECIPIENT)): 1},  # Pending
+                   metadata={"cidA": "docs/report.pdf"})
+    r = client.post("/notify-request", json={"cid": "cidA"},
+                    headers={"x-auth-token": auth_token(RECIPIENT)})
+    assert r.status_code == 200 and r.json() == {"sent": True}
+
+    to, subject, body = capture_email[0]
+    assert to == f"{OWNER.lower()}@example.test"
+    assert "report.pdf" in subject and "report.pdf" in body
+    assert "Shared with others" in body
+
+
+def test_notify_request_refuses_without_a_pending_request(client, patch_contract, auth_token, capture_email):
+    # Otherwise the endpoint is a button for mailing an owner on demand.
+    from web3 import Web3
+    patch_contract(owners={"cidA": Web3.to_checksum_address(OWNER)})  # no request -> status 0
+    r = client.post("/notify-request", json={"cid": "cidA"},
+                    headers={"x-auth-token": auth_token(RECIPIENT)})
+    assert r.status_code == 409
+    assert capture_email == []
+
+
+def test_notify_request_is_quiet_when_the_owner_has_no_email(client, patch_contract, auth_token,
+                                                             capture_email, monkeypatch):
+    from web3 import Web3
+    monkeypatch.setattr(sharing, "_privy_email_for_address", lambda addr: None)
+    patch_contract(owners={"cidA": Web3.to_checksum_address(OWNER)},
+                   requests={("cidA", Web3.to_checksum_address(RECIPIENT)): 1})
+    r = client.post("/notify-request", json={"cid": "cidA"},
+                    headers={"x-auth-token": auth_token(RECIPIENT)})
+    assert r.status_code == 200 and r.json()["sent"] is False
+    assert capture_email == []
+
+
+def test_notify_approve_rejects_a_non_owner(client, patch_contract, auth_token, capture_email):
+    from web3 import Web3
+    patch_contract(owners={"cidA": Web3.to_checksum_address(OWNER)})
+    r = client.post("/notify-approve",
+                    json={"cid": "cidA", "requester": RECIPIENT},
+                    headers={"x-auth-token": auth_token(RECIPIENT)})
+    assert r.status_code == 403
+    assert capture_email == []
+
+
+def test_notify_approve_refuses_when_the_chain_says_denied(client, patch_contract,
+                                                                    auth_token, capture_email):
+    # Chain says denied, so /notify-approve must refuse to send.
+    from web3 import Web3
+    patch_contract(owners={"cidA": Web3.to_checksum_address(OWNER)},
+                   requests={("cidA", Web3.to_checksum_address(RECIPIENT)): 3})  # Denied
+    r = client.post("/notify-approve",
+                    json={"cid": "cidA", "requester": RECIPIENT},
+                    headers={"x-auth-token": auth_token(OWNER)})
+    assert r.status_code == 409
+    assert capture_email == []
+
+
+def test_notify_approve_tells_the_requester(client, patch_contract,
+                                                                auth_token, capture_email):
+    from web3 import Web3
+    recipient_cs = Web3.to_checksum_address(RECIPIENT)
+    patch_contract(owners={"cidA": Web3.to_checksum_address(OWNER)},
+                   requests={("cidA", recipient_cs): 2},        # Approved
+                   expires={("cidA", recipient_cs): 5400},
+                   metadata={"cidA": "report.pdf"})
+    r = client.post("/notify-approve",
+                    json={"cid": "cidA", "requester": RECIPIENT},
+                    headers={"x-auth-token": auth_token(OWNER)})
+    assert r.status_code == 200
+
+    to, subject, body = capture_email[0]
+    assert to == f"{RECIPIENT.lower()}@example.test"
+    assert "extended" in subject
+    assert "5,400" in body          # the block their access now runs to
+
+
+def test_notify_deny_tells_the_requester(client, patch_contract,
+                                                                auth_token, capture_email):
+    from web3 import Web3
+    patch_contract(owners={"cidA": Web3.to_checksum_address(OWNER)},
+                   requests={("cidA", Web3.to_checksum_address(RECIPIENT)): 3},  # Denied
+                   metadata={"cidA": "report.pdf"})
+    r = client.post("/notify-deny",
+                    json={"cid": "cidA", "requester": RECIPIENT},
+                    headers={"x-auth-token": auth_token(OWNER)})
+    assert r.status_code == 200
+
+    _to, subject, body = capture_email[0]
+    assert "declined" in subject
+    assert "ask again" in body.lower()

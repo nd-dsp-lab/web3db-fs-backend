@@ -73,3 +73,39 @@ class AuthTokenRequest(BaseModel):
     address: str
     timestamp: int
     signature: str
+
+
+# --- access extension requests ---
+# The recipient of an expired share asking for more time, and the owner
+# resolving that ask. user_address is the signer the prepared transaction is
+# built for, as everywhere else.
+class RequestAccessRequest(BaseModel):
+    cid: str
+    duration_blocks: int
+    user_address: str
+
+class ApproveRequestRequest(BaseModel):
+    cid: str
+    requester: str
+    duration_blocks: int
+    user_address: str
+
+class DenyRequestRequest(BaseModel):
+    cid: str
+    requester: str
+    user_address: str
+
+class CancelRequestRequest(BaseModel):
+    cid: str
+    user_address: str
+
+
+# Notifications for the request flow. Deliberately thin: the backend reads
+# who the owner and requester are from the chain and the auth token, so a
+# caller cannot aim an email at someone by naming them here.
+class NotifyRequestRequest(BaseModel):
+    cid: str
+
+class NotifyDecisionRequest(BaseModel):
+    cid: str
+    requester: str

@@ -7,6 +7,7 @@ from fastapi import APIRouter
 from web3 import Web3
 
 from configure import IPFS_API_URL, IPFS_GATEWAY_URL, contract
+from constants import REQUEST_STATUS
 
 logger = logging.getLogger(__name__)
 
@@ -74,14 +75,18 @@ def get_files(user_address: str = None):
         except Exception:
             permissions = 0
 
-        # A shared (non-owned) file whose access has expired (or been
-        # revoked) isn't "shared with me" anymore. getUserFiles keeps
-        # returning the cid regardless -- it's a list, not a permission
-        # check -- but getPermissions is already expiry-aware (0 once
-        # _expiresAtBlock has passed), so it's the single source of truth
-        # for whether this share is still actually active.
-        if not is_owner and permissions == 0:
-            continue
+        # A non-owned file with no current permissions has *expired*, not been
+        # revoked: _revoke pops the cid out of sharedFiles, so getUserFiles
+        # would not be returning it at all if access had been taken away
+        # deliberately. Expiry removes nothing -- nothing runs at the expiry
+        # block -- so the cid stays and the file stays in the listing, flagged,
+        # to be shown greyed out. It used to be dropped here, which is what
+        # made an expiring share vanish with no explanation.
+        # `owner is not None` matters: if both getFileOwner attempts fail we do
+        # not know whose file this is, and permissions defaults to 0 on its own
+        # failure -- without the guard a transient RPC blip would confidently
+        # label a perfectly good file "Access expired".
+        is_expired = owner is not None and (not is_owner) and permissions == 0
 
         # A recipient needs to know their access is on a clock at all --
         # otherwise a shared file just vanishes later with no warning.
@@ -94,20 +99,41 @@ def get_files(user_address: str = None):
             except Exception as e:
                 logger.warning("getExpiresAtBlock failed for %s/%s: %s", cid, user_address, e)
 
+        # Where this recipient's own ask stands, so the greyed-out tile can say
+        # "requested" or "denied" rather than just looking broken. Only expired
+        # files pay for this read; nothing else consults it.
+        request_status = None
+        if is_expired:
+            try:
+                status = contract.functions.getRequest(cid, user_address).call()[3]
+                request_status = REQUEST_STATUS[status] if status < len(REQUEST_STATUS) else "none"
+            except Exception as e:
+                logger.warning("getRequest failed for %s/%s: %s", cid, user_address, e)
+
         # Who the file is shared with (owner only) — drives the Sharing
         # column and the shared-folder icon (folder = intersection of these).
-        # Filtered the same way: getSharedUsers returns every address ever
-        # granted, expired or not, so each is re-checked against the
-        # expiry-aware getPermissions before being shown as still shared.
+        # getSharedUsers returns every address ever granted, expired or not, so
+        # each is re-checked against the expiry-aware getPermissions.
+        #
+        # shared_with keeps only the still-active ones and keeps its shape:
+        # App.jsx intersects it for folder stats and FileList counts it.
+        # shared_with_detail is the superset the owner's "Shared with others"
+        # view needs, and costs no extra calls -- anyone still listed by
+        # getSharedUsers whose permissions have gone to 0 has lapsed rather
+        # than been revoked, since revoke drops them from that list outright.
         shared_with = []
+        shared_with_detail = []
         if is_owner:
             try:
                 for addr in contract.functions.getSharedUsers(cid).call():
                     try:
-                        if contract.functions.getPermissions(cid, addr).call() != 0:
-                            shared_with.append(addr)
+                        active = contract.functions.getPermissions(cid, addr).call() != 0
                     except Exception as e:
                         logger.warning("getPermissions failed for %s/%s: %s", cid, addr, e)
+                        continue
+                    shared_with_detail.append({"address": addr, "lapsed": not active})
+                    if active:
+                        shared_with.append(addr)
             except Exception as e:
                 logger.warning("getSharedUsers failed for %s: %s", cid, e)
 
@@ -121,7 +147,10 @@ def get_files(user_address: str = None):
             "is_owner": is_owner,
             "permissions": permissions,
             "expires_at_block": expires_at_block,
+            "is_expired": is_expired,
+            "request_status": request_status,
             "shared_with": shared_with,
+            "shared_with_detail": shared_with_detail,
             "size": get_file_size(cid),
             "ipfs_url": f"{IPFS_GATEWAY_URL}/{cid}"
         })

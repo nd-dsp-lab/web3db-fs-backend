@@ -90,6 +90,63 @@ def prepare_share_transaction(cid: str, to_address: str, user_address: str, dura
         raise
 
 
+# --- access extension requests ---
+# The recipient asks; the owner approves or denies. The gate on who may ask
+# lives in the contract (you held a timed grant and it lapsed), so there is
+# nothing to re-check here -- a bad ask reverts rather than being prepared.
+def prepare_request_access_transaction(cid: str, user_address: str, duration_blocks: int):
+    try:
+        logger.info("Requesting access to CID %s for %s duration_blocks=%s",
+                    cid, user_address, duration_blocks)
+        return contract.functions.requestAccess(cid, duration_blocks).build_transaction(
+            _base_tx(user_address))
+    except Exception as e:
+        logger.error("Request-access transaction preparation failed: %s", e)
+        raise
+
+
+# Approving re-grants through the same SHARE_MASK an ordinary share uses, so
+# an approved request is indistinguishable from a normal timed share in its
+# effect. duration_blocks is the owner's choice, not the requester's.
+def prepare_approve_request_transaction(cid: str, requester: str, user_address: str, duration_blocks: int):
+    try:
+        user_address = Web3.to_checksum_address(user_address)
+        requester = Web3.to_checksum_address(requester)
+        _assert_owner(cid, user_address, "approve a request for")
+
+        logger.info("Approving request on CID %s for %s mask %s duration_blocks=%s",
+                    cid, requester, SHARE_MASK, duration_blocks)
+        return contract.functions.approveRequest(
+            cid, requester, SHARE_MASK, duration_blocks).build_transaction(_base_tx(user_address))
+    except Exception as e:
+        logger.error("Approve-request transaction preparation failed: %s", e)
+        raise
+
+
+def prepare_deny_request_transaction(cid: str, requester: str, user_address: str):
+    try:
+        user_address = Web3.to_checksum_address(user_address)
+        requester = Web3.to_checksum_address(requester)
+        _assert_owner(cid, user_address, "deny a request for")
+
+        logger.info("Denying request on CID %s from %s", cid, requester)
+        return contract.functions.denyRequest(cid, requester).build_transaction(
+            _base_tx(user_address))
+    except Exception as e:
+        logger.error("Deny-request transaction preparation failed: %s", e)
+        raise
+
+
+def prepare_cancel_request_transaction(cid: str, user_address: str):
+    try:
+        logger.info("Cancelling request on CID %s by %s", cid, user_address)
+        return contract.functions.cancelRequest(cid).build_transaction(
+            _base_tx(user_address))
+    except Exception as e:
+        logger.error("Cancel-request transaction preparation failed: %s", e)
+        raise
+
+
 # Batch share: one grantFiles(cids, to, mask) tx for folder share.
 # Filters to cids the caller owns; returns (txn, count) or (None, 0).
 def prepare_share_batch_transaction(cids: list[str], to_address: str, user_address: str, duration_blocks: Optional[int] = None):

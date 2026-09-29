@@ -46,12 +46,16 @@ class FakeContract:
     (the cid), matching how the app calls getFileOwner / getPermissions / etc.
     """
 
-    def __init__(self, owners=None, shared=None, permissions=None, user_files=None, expires=None):
+    def __init__(self, owners=None, shared=None, permissions=None, user_files=None,
+                 expires=None, requests=None, pending=None, metadata=None):
         self._owners = owners or {}
         self._shared = shared or {}
         self._permissions = permissions or {}
         self._user_files = user_files or []
         self._expires = expires or {}
+        self._requests = requests or {}    # (cid, user) -> ReqStatus int
+        self._pending = pending or {}      # owner -> [(cid, requester, duration, block)]
+        self._metadata = metadata or {}    # cid -> full_path
         self.functions = self  # app calls contract.functions.X(...)
 
     def getFileOwner(self, cid):
@@ -68,6 +72,22 @@ class FakeContract:
 
     def getUserFiles(self, user):
         return SimpleNamespace(call=lambda: list(self._user_files))
+
+    # (durationBlocks, requestedAtBlock, resolvedAtBlock, status) — the app
+    # reads element 3, the ReqStatus ordinal.
+    def getRequest(self, cid, user):
+        return SimpleNamespace(call=lambda: (0, 0, 0, self._requests.get((cid, user), 0)))
+
+    # Four parallel arrays, as the contract returns them.
+    def getPendingRequests(self, owner):
+        rows = list(self._pending.get(owner, []))
+        return SimpleNamespace(call=lambda: (
+            [r[0] for r in rows], [r[1] for r in rows],
+            [r[2] for r in rows], [r[3] for r in rows]))
+
+    # Public mapping getter: (cid, filename, fileFormat, timestamp)
+    def fileMetadata(self, cid):
+        return SimpleNamespace(call=lambda: (cid, self._metadata.get(cid, ""), "", 0))
 
 
 @pytest.fixture

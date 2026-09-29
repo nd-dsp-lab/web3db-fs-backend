@@ -801,4 +801,285 @@ describe("FileStorage", function () {
       expect(await fileStorage.canDownload(cid, user2.address)).to.be.true;
     });
   });
+
+  describe("Access extension requests", function () {
+    const MASK = READ | DOWNLOAD;
+    let cid;
+
+    // Grant user1 timed access and run the clock out, which is the only state
+    // from which a request is allowed.
+    async function expireGrant(target = user1, duration = 3) {
+      await fileStorage.grantWithExpiry(cid, target.address, MASK, duration);
+      for (let i = 0; i < duration + 1; i++) await ethers.provider.send("evm_mine");
+    }
+
+    beforeEach(async function () {
+      cid = "QmReq";
+      await fileStorage.uploadFile(cid, "report.pdf", "application/pdf");
+    });
+
+    describe("requestAccess gate", function () {
+      it("Should reject a cid nobody has uploaded", async function () {
+        await expect(
+          fileStorage.connect(user1).requestAccess("QmNope", 10)
+        ).to.be.revertedWith("No such file");
+      });
+
+      it("Should reject the owner asking for their own file", async function () {
+        await expect(fileStorage.requestAccess(cid, 10)).to.be.revertedWith("Owner already has access");
+      });
+
+      it("Should require a duration", async function () {
+        await expireGrant();
+        await expect(
+          fileStorage.connect(user1).requestAccess(cid, 0)
+        ).to.be.revertedWith("Duration required");
+      });
+
+      it("Should reject a stranger who was never granted access", async function () {
+        await expect(
+          fileStorage.connect(user2).requestAccess(cid, 10)
+        ).to.be.revertedWith("No prior timed grant");
+      });
+
+      it("Should reject someone whose permanent grant never expires", async function () {
+        await fileStorage.grant(cid, user1.address, MASK);
+        await expect(
+          fileStorage.connect(user1).requestAccess(cid, 10)
+        ).to.be.revertedWith("No prior timed grant");
+      });
+
+      it("Should reject someone whose timed access is still live", async function () {
+        await fileStorage.grantWithExpiry(cid, user1.address, MASK, 100);
+        await expect(
+          fileStorage.connect(user1).requestAccess(cid, 10)
+        ).to.be.revertedWith("Access has not expired");
+      });
+
+      it("Should accept a request once the grant has lapsed", async function () {
+        await expireGrant();
+        await fileStorage.connect(user1).requestAccess(cid, 50);
+
+        const r = await fileStorage.getRequest(cid, user1.address);
+        expect(r.status).to.equal(1);                       // Pending
+        expect(r.durationBlocks).to.equal(50);
+        expect(r.resolvedAtBlock).to.equal(0);
+        expect(Number(r.requestedAtBlock)).to.be.gt(0);
+      });
+
+      it("Should reject a second request while one is pending", async function () {
+        await expireGrant();
+        await fileStorage.connect(user1).requestAccess(cid, 50);
+        await expect(
+          fileStorage.connect(user1).requestAccess(cid, 60)
+        ).to.be.revertedWith("Request already pending");
+      });
+
+      it("Should emit the cid readably — the event does not index it", async function () {
+        await expireGrant();
+        await expect(fileStorage.connect(user1).requestAccess(cid, 50))
+          .to.emit(fileStorage, "AccessRequested")
+          .withArgs(cid, owner.address, user1.address, 50);
+      });
+    });
+
+    describe("approveRequest", function () {
+      beforeEach(async function () {
+        await expireGrant();
+        await fileStorage.connect(user1).requestAccess(cid, 50);
+      });
+
+      it("Should restore access and mark the request approved", async function () {
+        await fileStorage.approveRequest(cid, user1.address, MASK, 100);
+
+        expect(await fileStorage.canRead(cid, user1.address)).to.be.true;
+        expect(await fileStorage.canDownload(cid, user1.address)).to.be.true;
+        const r = await fileStorage.getRequest(cid, user1.address);
+        expect(r.status).to.equal(2);                       // Approved
+        expect(Number(r.resolvedAtBlock)).to.be.gt(0);
+      });
+
+      it("Should let the owner grant less than was asked for", async function () {
+        const before = await ethers.provider.getBlockNumber();
+        await fileStorage.approveRequest(cid, user1.address, MASK, 5);
+        const expiry = Number(await fileStorage.getExpiresAtBlock(cid, user1.address));
+        expect(expiry).to.be.lessThan(before + 50);
+      });
+
+      it("Should not duplicate the file in the recipient's list", async function () {
+        const before = (await fileStorage.getUserFiles(user1.address)).length;
+        await fileStorage.approveRequest(cid, user1.address, MASK, 100);
+        const after = (await fileStorage.getUserFiles(user1.address)).length;
+        expect(after).to.equal(before);
+      });
+
+      it("Should reject a non-owner approving", async function () {
+        await expect(
+          fileStorage.connect(user2).approveRequest(cid, user1.address, MASK, 100)
+        ).to.be.revertedWith("Not file owner");
+      });
+
+      it("Should reject approving when nothing is pending", async function () {
+        await fileStorage.approveRequest(cid, user1.address, MASK, 100);
+        await expect(
+          fileStorage.approveRequest(cid, user1.address, MASK, 100)
+        ).to.be.revertedWith("No pending request");
+      });
+
+      it("Should require a duration", async function () {
+        await expect(
+          fileStorage.approveRequest(cid, user1.address, MASK, 0)
+        ).to.be.revertedWith("Use grant() for permanent access");
+      });
+
+      it("Should block a fresh request while the new grant is live, and allow one after it lapses", async function () {
+        await fileStorage.approveRequest(cid, user1.address, MASK, 4);
+        await expect(
+          fileStorage.connect(user1).requestAccess(cid, 10)
+        ).to.be.revertedWith("Access has not expired");
+
+        for (let i = 0; i < 6; i++) await ethers.provider.send("evm_mine");
+        await fileStorage.connect(user1).requestAccess(cid, 10);
+        expect((await fileStorage.getRequest(cid, user1.address)).status).to.equal(1);
+      });
+    });
+
+    describe("denyRequest and cancelRequest", function () {
+      beforeEach(async function () {
+        await expireGrant();
+        await fileStorage.connect(user1).requestAccess(cid, 50);
+      });
+
+      it("Should deny without granting anything", async function () {
+        await fileStorage.denyRequest(cid, user1.address);
+
+        expect((await fileStorage.getRequest(cid, user1.address)).status).to.equal(3);   // Denied
+        expect(await fileStorage.canRead(cid, user1.address)).to.be.false;
+        const [cids] = await fileStorage.getPendingRequests(owner.address);
+        expect(cids.length).to.equal(0);
+      });
+
+      it("Should reject a non-owner denying", async function () {
+        await expect(
+          fileStorage.connect(user2).denyRequest(cid, user1.address)
+        ).to.be.revertedWith("Not file owner");
+      });
+
+      it("Should let the requester ask again after a denial, overwriting the old record", async function () {
+        await fileStorage.denyRequest(cid, user1.address);
+        await fileStorage.connect(user1).requestAccess(cid, 77);
+
+        const r = await fileStorage.getRequest(cid, user1.address);
+        expect(r.status).to.equal(1);                       // Pending again
+        expect(r.durationBlocks).to.equal(77);
+        // Re-asking must not grow the requester list
+        expect((await fileStorage.getRequesters(cid)).length).to.equal(1);
+      });
+
+      it("Should let the requester cancel their own request", async function () {
+        await fileStorage.connect(user1).cancelRequest(cid);
+
+        expect((await fileStorage.getRequest(cid, user1.address)).status).to.equal(4);   // Cancelled
+        const [cids] = await fileStorage.getPendingRequests(owner.address);
+        expect(cids.length).to.equal(0);
+      });
+    });
+
+    describe("getPendingRequests", function () {
+      it("Should be empty for an owner with nothing outstanding", async function () {
+        const [cids] = await fileStorage.getPendingRequests(owner.address);
+        expect(cids.length).to.equal(0);
+      });
+
+      it("Should report every open request across files, with what was asked", async function () {
+        const cid2 = "QmReq2";
+        await fileStorage.uploadFile(cid2, "notes.md", "text/markdown");
+
+        await fileStorage.grantWithExpiry(cid, user1.address, MASK, 2);
+        await fileStorage.grantWithExpiry(cid2, user2.address, MASK, 2);
+        for (let i = 0; i < 4; i++) await ethers.provider.send("evm_mine");
+
+        await fileStorage.connect(user1).requestAccess(cid, 11);
+        await fileStorage.connect(user2).requestAccess(cid2, 22);
+
+        const [cids, requesters, durations] = await fileStorage.getPendingRequests(owner.address);
+        expect(cids.length).to.equal(2);
+        const pairs = cids.map((c, i) => `${c}:${requesters[i]}:${durations[i]}`).sort();
+        expect(pairs).to.deep.equal(
+          [`${cid}:${user1.address}:11`, `${cid2}:${user2.address}:22`].sort()
+        );
+      });
+
+      it("Should keep the index correct when a middle request is resolved (swap-pop)", async function () {
+        const [, , , a, b, c] = await ethers.getSigners();
+        for (const u of [a, b, c]) await fileStorage.grantWithExpiry(cid, u.address, MASK, 2);
+        for (let i = 0; i < 4; i++) await ethers.provider.send("evm_mine");
+        for (const u of [a, b, c]) await fileStorage.connect(u).requestAccess(cid, 10);
+
+        // resolve the middle one
+        await fileStorage.denyRequest(cid, b.address);
+
+        let [cids, requesters] = await fileStorage.getPendingRequests(owner.address);
+        expect(cids.length).to.equal(2);
+        expect(requesters).to.not.include(b.address);
+
+        // the two survivors must still be resolvable -- a stale _pendingIndex
+        // would leave one of them stuck in the list after resolving
+        await fileStorage.denyRequest(cid, a.address);
+        await fileStorage.approveRequest(cid, c.address, MASK, 10);
+
+        [cids] = await fileStorage.getPendingRequests(owner.address);
+        expect(cids.length).to.equal(0);
+      });
+
+      it("Should not leak one owner's requests to another", async function () {
+        await expireGrant();
+        await fileStorage.connect(user1).requestAccess(cid, 10);
+
+        const [cids] = await fileStorage.getPendingRequests(user2.address);
+        expect(cids.length).to.equal(0);
+      });
+    });
+
+    describe("deleteFile cleanup", function () {
+      it("Should clear requests so a deleted file leaves nothing unresolvable", async function () {
+        await expireGrant();
+        await fileStorage.connect(user1).requestAccess(cid, 50);
+
+        await fileStorage.deleteFile(cid);
+
+        expect((await fileStorage.getRequesters(cid)).length).to.equal(0);
+        expect((await fileStorage.getRequest(cid, user1.address)).status).to.equal(0);   // None
+        const [cids] = await fileStorage.getPendingRequests(owner.address);
+        expect(cids.length).to.equal(0);
+      });
+
+      it("Should clear sharedUsers, so a re-uploaded cid does not inherit old recipients", async function () {
+        await fileStorage.grant(cid, user1.address, MASK);
+        expect((await fileStorage.getSharedUsers(cid)).length).to.equal(1);
+
+        await fileStorage.deleteFile(cid);
+        // cids are content-addressed, so re-uploading the same bytes reuses it
+        await fileStorage.uploadFile(cid, "report.pdf", "application/pdf");
+
+        expect((await fileStorage.getSharedUsers(cid)).length).to.equal(0);
+        expect(Number(await fileStorage.getPermissions(cid, user1.address))).to.equal(0);
+      });
+
+      it("Should clear a request from a requester the owner had already revoked", async function () {
+        await expireGrant();
+        await fileStorage.connect(user1).requestAccess(cid, 50);
+        // revoke pulls user1 out of sharedUsers while the request stays live,
+        // which is why the cleanup loops _requesters and not sharedUsers
+        await fileStorage.revoke(cid, user1.address, MASK);
+        expect((await fileStorage.getSharedUsers(cid)).length).to.equal(0);
+
+        await fileStorage.deleteFile(cid);
+
+        expect((await fileStorage.getRequest(cid, user1.address)).status).to.equal(0);
+        const [cids] = await fileStorage.getPendingRequests(owner.address);
+        expect(cids.length).to.equal(0);
+      });
+    });
+  });
 });
