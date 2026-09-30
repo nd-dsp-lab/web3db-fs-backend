@@ -45,6 +45,41 @@ contract FileStorage {
     // since a mapping's default value is 0 -- no migration needed for old grants.
     mapping(string => mapping(address => uint256)) private _expiresAtBlock;
 
+    // ---- Access extension requests ----
+    // An expired grant leaves the cid in sharedFiles (nothing runs at the
+    // expiry block), so the recipient still sees the file -- greyed out -- and
+    // can ask for more time. A revoked grant removes the cid outright, so a
+    // revoked user never sees the file and never reaches these functions.
+    enum ReqStatus { None, Pending, Approved, Denied, Cancelled }
+
+    struct AccessRequest {
+        uint256   durationBlocks;    // blocks the requester asked for
+        uint64    requestedAtBlock;
+        uint64    resolvedAtBlock;   // 0 while pending
+        ReqStatus status;
+    }
+
+    mapping(string => mapping(address => AccessRequest)) private _requests;
+    mapping(string => address[]) private _requesters;   // append-once per address
+
+    // The owner's open requests, maintained on write rather than searched for
+    // on read. Scanning userFiles[owner] instead would be O(files), and every
+    // cid is a string (~3 cold SLOADs each), so a large account would burn
+    // millions of gas to find nothing. This is O(open requests) -- usually 0.
+    struct PendingKey { string cid; address requester; }
+    mapping(address => PendingKey[]) private _ownerPending;
+    mapping(bytes32 => uint256) private _pendingIndex;  // slot + 1; 0 = absent
+
+    // cid is deliberately NOT indexed here, unlike the older events above: an
+    // indexed string stores only keccak(cid) in the topic, so those logs can
+    // never be read back into cids. These four are the audit trail that
+    // justifies keeping the negotiation on-chain at all, so the cid has to
+    // survive in the data field.
+    event AccessRequested(string cid, address indexed owner, address indexed requester, uint256 durationBlocks);
+    event RequestApproved(string cid, address indexed owner, address indexed requester, uint256 durationBlocks);
+    event RequestDenied(string cid, address indexed owner, address indexed requester);
+    event RequestCancelled(string cid, address indexed owner, address indexed requester);
+
     // can attach this to functions to save time later
     modifier onlyFileOwner(string memory cid) {
         require(msg.sender == fileOwner[cid], "Not file owner");
@@ -195,6 +230,137 @@ contract FileStorage {
         return _expiresAtBlock[cid][user];
     }
 
+    function _pendingKey(string memory cid, address requester) internal pure returns (bytes32) {
+        // One dynamic argument followed by a fixed-width one cannot collide.
+        return keccak256(abi.encodePacked(cid, requester));
+    }
+
+    function _addPending(string memory cid, address fileOwner_, address requester) internal {
+        bytes32 k = _pendingKey(cid, requester);
+        if (_pendingIndex[k] != 0) return;   // already open
+        _ownerPending[fileOwner_].push(PendingKey({cid: cid, requester: requester}));
+        _pendingIndex[k] = _ownerPending[fileOwner_].length;   // slot + 1
+    }
+
+    function _removePending(string memory cid, address fileOwner_, address requester) internal {
+        bytes32 k = _pendingKey(cid, requester);
+        uint256 idx = _pendingIndex[k];
+        if (idx == 0) return;
+        PendingKey[] storage list = _ownerPending[fileOwner_];
+        uint256 i = idx - 1;
+        uint256 last = list.length - 1;
+        if (i != last) {
+            list[i] = list[last];
+            _pendingIndex[_pendingKey(list[i].cid, list[i].requester)] = i + 1;
+        }
+        list.pop();
+        delete _pendingIndex[k];
+    }
+
+    // Ask the owner to re-grant access that has run out. The two requires on
+    // prior access are the whole gate: _expiresAtBlock is nonzero only if the
+    // owner once granted this user timed access, and _effectivePermissions is
+    // 0 only once that grant lapsed. Together they mean "you had it and lost
+    // it", so a stranger to this cid satisfies neither.
+    function requestAccess(string memory cid, uint256 durationBlocks) external {
+        address fileOwner_ = fileOwner[cid];
+        require(fileOwner_ != address(0), "No such file");
+        require(msg.sender != fileOwner_, "Owner already has access");
+        require(durationBlocks > 0, "Duration required");
+        require(_expiresAtBlock[cid][msg.sender] != 0, "No prior timed grant");
+        require(_effectivePermissions(cid, msg.sender) == 0, "Access has not expired");
+
+        AccessRequest storage r = _requests[cid][msg.sender];
+        require(r.status != ReqStatus.Pending, "Request already pending");
+        if (r.requestedAtBlock == 0) _requesters[cid].push(msg.sender);  // first ask ever
+
+        r.durationBlocks = durationBlocks;
+        r.requestedAtBlock = uint64(block.number);
+        r.resolvedAtBlock = 0;
+        r.status = ReqStatus.Pending;
+        _addPending(cid, fileOwner_, msg.sender);
+
+        emit AccessRequested(cid, fileOwner_, msg.sender, durationBlocks);
+    }
+
+    function cancelRequest(string memory cid) external {
+        AccessRequest storage r = _requests[cid][msg.sender];
+        require(r.status == ReqStatus.Pending, "No pending request");
+        r.status = ReqStatus.Cancelled;
+        r.resolvedAtBlock = uint64(block.number);
+        _removePending(cid, fileOwner[cid], msg.sender);
+        emit RequestCancelled(cid, fileOwner[cid], msg.sender);
+    }
+
+    // durationBlocks is the owner's to choose, not the requester's -- the UI
+    // prefills what was asked for and the owner may give less.
+    function approveRequest(string memory cid, address requester, uint256 grantMask, uint256 durationBlocks)
+        external
+        onlyFileOwner(cid)
+    {
+        AccessRequest storage r = _requests[cid][requester];
+        require(r.status == ReqStatus.Pending, "No pending request");
+        require(durationBlocks > 0, "Use grant() for permanent access");
+
+        r.status = ReqStatus.Approved;
+        r.resolvedAtBlock = uint64(block.number);
+        _removePending(cid, msg.sender, requester);
+
+        // Same writer as an ordinary timed share. _grant is the only place
+        // that touches _permissions and _expiresAtBlock while keeping
+        // sharedFiles and sharedUsers in step, so an approved request is
+        // indistinguishable from a normal grant in its effect -- the audit
+        // trail is the only difference.
+        _grant(cid, requester, grantMask, durationBlocks);
+
+        emit RequestApproved(cid, msg.sender, requester, durationBlocks);
+    }
+
+    function denyRequest(string memory cid, address requester) external onlyFileOwner(cid) {
+        AccessRequest storage r = _requests[cid][requester];
+        require(r.status == ReqStatus.Pending, "No pending request");
+        r.status = ReqStatus.Denied;
+        r.resolvedAtBlock = uint64(block.number);
+        _removePending(cid, msg.sender, requester);
+        emit RequestDenied(cid, msg.sender, requester);
+    }
+
+    function getRequest(string memory cid, address user) external view returns (AccessRequest memory) {
+        return _requests[cid][user];
+    }
+
+    // Everyone who has ever asked about this cid, resolved or not.
+    function getRequesters(string memory cid) external view returns (address[] memory) {
+        return _requesters[cid];
+    }
+
+    // Every open request across all of an owner's files, in one call.
+    function getPendingRequests(address fileOwner_)
+        external
+        view
+        returns (
+            string[] memory cids,
+            address[] memory requesters,
+            uint256[] memory durations,
+            uint64[] memory requestedAt
+        )
+    {
+        PendingKey[] storage list = _ownerPending[fileOwner_];
+        uint256 n = list.length;
+        cids = new string[](n);
+        requesters = new address[](n);
+        durations = new uint256[](n);
+        requestedAt = new uint64[](n);
+        for (uint256 i = 0; i < n; i++) {
+            PendingKey storage k = list[i];
+            AccessRequest storage r = _requests[k.cid][k.requester];
+            cids[i] = k.cid;
+            requesters[i] = k.requester;
+            durations[i] = r.durationBlocks;
+            requestedAt[i] = r.requestedAtBlock;
+        }
+    }
+
     // Permission helper functions (return if a user has a certain permission for a given file)
     function canRead(string memory cid, address user) external view returns (bool) {
         return hasAll(cid, user, READ);
@@ -328,6 +494,24 @@ contract FileStorage {
             delete _expiresAtBlock[cid][user];
         }
 
+
+        // Requests need their own loop: most recipients never ask, and a
+        // requester the owner has since revoked is out of sharedUsers with a
+        // live request. Left behind it could never be resolved -- both
+        // resolvers are onlyFileOwner and fileOwner is about to be zero.
+        address[] memory askers = _requesters[cid];
+        for (uint256 i = 0; i < askers.length; i++) {
+            _removePending(cid, owner, askers[i]);
+            delete _requests[cid][askers[i]];
+        }
+        delete _requesters[cid];
+
+        // Pre-existing gap, fixed here: the loop above reads sharedUsers into
+        // memory and never cleared the storage. Harmless while nothing read it
+        // for a deleted file, but cids are content-addressed -- re-uploading a
+        // deleted file reuses its cid and would inherit the stale recipient
+        // list, reporting old recipients as lapsed on the new file.
+        delete sharedUsers[cid];
 
         delete fileMetadata[cid];
         delete fileOwner[cid];

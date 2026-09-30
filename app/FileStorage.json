@@ -7,6 +7,37 @@
       "anonymous": false,
       "inputs": [
         {
+          "indexed": false,
+          "internalType": "string",
+          "name": "cid",
+          "type": "string"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "owner",
+          "type": "address"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "requester",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "durationBlocks",
+          "type": "uint256"
+        }
+      ],
+      "name": "AccessRequested",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
           "indexed": true,
           "internalType": "address",
           "name": "owner",
@@ -117,6 +148,87 @@
       "type": "event"
     },
     {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": false,
+          "internalType": "string",
+          "name": "cid",
+          "type": "string"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "owner",
+          "type": "address"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "requester",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "durationBlocks",
+          "type": "uint256"
+        }
+      ],
+      "name": "RequestApproved",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": false,
+          "internalType": "string",
+          "name": "cid",
+          "type": "string"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "owner",
+          "type": "address"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "requester",
+          "type": "address"
+        }
+      ],
+      "name": "RequestCancelled",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": false,
+          "internalType": "string",
+          "name": "cid",
+          "type": "string"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "owner",
+          "type": "address"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "requester",
+          "type": "address"
+        }
+      ],
+      "name": "RequestDenied",
+      "type": "event"
+    },
+    {
       "inputs": [],
       "name": "CHANGE_OWNER",
       "outputs": [
@@ -218,6 +330,34 @@
         }
       ],
       "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "string",
+          "name": "cid",
+          "type": "string"
+        },
+        {
+          "internalType": "address",
+          "name": "requester",
+          "type": "address"
+        },
+        {
+          "internalType": "uint256",
+          "name": "grantMask",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "durationBlocks",
+          "type": "uint256"
+        }
+      ],
+      "name": "approveRequest",
+      "outputs": [],
+      "stateMutability": "nonpayable",
       "type": "function"
     },
     {
@@ -415,6 +555,19 @@
     {
       "inputs": [
         {
+          "internalType": "string",
+          "name": "cid",
+          "type": "string"
+        }
+      ],
+      "name": "cancelRequest",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
           "internalType": "string[]",
           "name": "cids",
           "type": "string[]"
@@ -434,6 +587,24 @@
         }
       ],
       "name": "deleteFile",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "string",
+          "name": "cid",
+          "type": "string"
+        },
+        {
+          "internalType": "address",
+          "name": "requester",
+          "type": "address"
+        }
+      ],
+      "name": "denyRequest",
       "outputs": [],
       "stateMutability": "nonpayable",
       "type": "function"
@@ -537,6 +708,40 @@
     {
       "inputs": [
         {
+          "internalType": "address",
+          "name": "fileOwner_",
+          "type": "address"
+        }
+      ],
+      "name": "getPendingRequests",
+      "outputs": [
+        {
+          "internalType": "string[]",
+          "name": "cids",
+          "type": "string[]"
+        },
+        {
+          "internalType": "address[]",
+          "name": "requesters",
+          "type": "address[]"
+        },
+        {
+          "internalType": "uint256[]",
+          "name": "durations",
+          "type": "uint256[]"
+        },
+        {
+          "internalType": "uint64[]",
+          "name": "requestedAt",
+          "type": "uint64[]"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
           "internalType": "string",
           "name": "cid",
           "type": "string"
@@ -553,6 +758,71 @@
           "internalType": "uint256",
           "name": "",
           "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "string",
+          "name": "cid",
+          "type": "string"
+        },
+        {
+          "internalType": "address",
+          "name": "user",
+          "type": "address"
+        }
+      ],
+      "name": "getRequest",
+      "outputs": [
+        {
+          "components": [
+            {
+              "internalType": "uint256",
+              "name": "durationBlocks",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint64",
+              "name": "requestedAtBlock",
+              "type": "uint64"
+            },
+            {
+              "internalType": "uint64",
+              "name": "resolvedAtBlock",
+              "type": "uint64"
+            },
+            {
+              "internalType": "enum FileStorage.ReqStatus",
+              "name": "status",
+              "type": "uint8"
+            }
+          ],
+          "internalType": "struct FileStorage.AccessRequest",
+          "name": "",
+          "type": "tuple"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "string",
+          "name": "cid",
+          "type": "string"
+        }
+      ],
+      "name": "getRequesters",
+      "outputs": [
+        {
+          "internalType": "address[]",
+          "name": "",
+          "type": "address[]"
         }
       ],
       "stateMutability": "view",
@@ -810,6 +1080,24 @@
         }
       ],
       "name": "moveFiles",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "string",
+          "name": "cid",
+          "type": "string"
+        },
+        {
+          "internalType": "uint256",
+          "name": "durationBlocks",
+          "type": "uint256"
+        }
+      ],
+      "name": "requestAccess",
       "outputs": [],
       "stateMutability": "nonpayable",
       "type": "function"

@@ -400,3 +400,42 @@ class TestCommonAncestorFolder:
     def test_a_partial_name_match_is_not_a_shared_folder(self):
         # "Doc" is not an ancestor of "Docs" — segment-wise, not prefix-wise.
         assert helpers.common_ancestor_folder(["/Doc/a.pdf", "/Docs/b.txt"]) == ""
+
+
+# --- access extension requests ---
+
+def test_request_access_tx_calls_request_access(patch_helpers):
+    patch_helpers(owners={"cidA": OWNER})
+    tx = helpers.prepare_request_access_transaction("cidA", RECIPIENT, 50)
+    assert tx["_fn"] == "requestAccess"
+    assert tx["_args"] == ("cidA", 50)
+
+
+def test_approve_request_tx_regrants_the_ordinary_share_mask(patch_helpers):
+    # An approved request has to be indistinguishable from a normal timed
+    # share in its effect, so it goes out with the same mask /share uses.
+    patch_helpers(owners={"cidA": OWNER})
+    tx = helpers.prepare_approve_request_transaction("cidA", RECIPIENT, OWNER, 100)
+    assert tx["_fn"] == "approveRequest"
+    assert tx["_args"] == ("cidA", Web3.to_checksum_address(RECIPIENT), READ | DOWNLOAD, 100)
+
+
+def test_approve_request_tx_refuses_a_non_owner(patch_helpers):
+    patch_helpers(owners={"cidA": OTHER})
+    with pytest.raises(helpers.NotOwnerError):
+        helpers.prepare_approve_request_transaction("cidA", RECIPIENT, OWNER, 100)
+
+
+def test_deny_request_tx_refuses_a_non_owner(patch_helpers):
+    patch_helpers(owners={"cidA": OTHER})
+    with pytest.raises(helpers.NotOwnerError):
+        helpers.prepare_deny_request_transaction("cidA", RECIPIENT, OWNER)
+
+
+def test_cancel_request_tx_is_signed_by_the_requester(patch_helpers):
+    # Cancelling needs no ownership check -- the contract keys the request by
+    # msg.sender, so a caller can only ever cancel their own.
+    patch_helpers(owners={"cidA": OWNER})
+    tx = helpers.prepare_cancel_request_transaction("cidA", RECIPIENT)
+    assert tx["_fn"] == "cancelRequest"
+    assert tx["from"] == Web3.to_checksum_address(RECIPIENT)
