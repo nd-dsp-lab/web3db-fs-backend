@@ -21,11 +21,11 @@ SEPOLIA = 11155111
 
 # --- shared transaction scaffolding ---
 
-def test_gas_price_carries_25_percent_margin(patch_helpers):
-    # The node's quote lags the network, which left transactions stuck in the
-    # mempool; the margin also lets a retry replace a stuck tx at the same nonce.
+def test_gas_price_is_zero_on_the_free_gas_chain(patch_helpers):
+    # The QBFT chain runs with zeroBaseFee, so every transaction is priced at 0
+    # and accounts need no ETH. The node's quote is deliberately ignored.
     patch_helpers(gas_price=1_000_000_000)
-    assert helpers._gas_price() == 1_250_000_000
+    assert helpers._gas_price() == 0
 
 
 def test_base_tx_fields(patch_helpers):
@@ -34,7 +34,7 @@ def test_base_tx_fields(patch_helpers):
     assert tx["chainId"] == SEPOLIA
     assert tx["nonce"] == 7
     assert tx["from"] == OWNER, "address must be checksummed for web3"
-    assert tx["gasPrice"] == 1_250_000_000
+    assert tx["gasPrice"] == 0
 
 
 def test_base_tx_nonce_offset_stacks_unbroadcast_txs(patch_helpers):
@@ -212,7 +212,7 @@ def test_inherited_grants_are_nonce_offset_behind_the_upload(patch_helpers):
     txns = helpers.prepare_inherited_grant_transactions(["c1"], [RECIPIENT, OTHER], OWNER)
     assert [t["nonce"] for t in txns] == [8, 9]
     assert all(t["chainId"] == SEPOLIA for t in txns)
-    assert all(t["gasPrice"] == 1_250_000_000 for t in txns)
+    assert all(t["gasPrice"] == 0 for t in txns)
 
 
 def test_inherited_grants_one_tx_per_recipient_over_all_cids(patch_helpers):

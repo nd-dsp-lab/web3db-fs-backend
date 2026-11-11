@@ -157,8 +157,11 @@ class FakeTxContract:
 
 
 class FakeEth:
-    def __init__(self, nonce=7, gas_price=1_000_000_000):
+    def __init__(self, nonce=7, gas_price=1_000_000_000, chain_id=11155111):
         self.gas_price = gas_price
+        # helpers reads the chain id off the node rather than hardcoding
+        # Sepolia, so the double has to expose one.
+        self.chain_id = chain_id
         self._nonce = nonce
         self.nonce_queries = []
 
