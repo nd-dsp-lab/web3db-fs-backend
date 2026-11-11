@@ -7,7 +7,6 @@ from permissions import READ, DOWNLOAD
 
 logger = logging.getLogger(__name__)
 
-sepolia_chain_id = 11155111
 
 # Sharing grants READ + DOWNLOAD; unshare revokes the same mask.
 SHARE_MASK = READ | DOWNLOAD
@@ -17,11 +16,10 @@ class NotOwnerError(Exception):
     """The caller does not own the file they asked to act on."""
 
 
-# Price gas 25% above the node's quote. The quote lags the network (and
-# Infura can serve stale reads), which left transactions stuck in the
-# mempool; the margin also lets a retry replace a stuck tx at the same nonce.
+# Free-gas network: the chain runs with zeroBaseFee, so transactions carry a
+# gas price of 0 and accounts do not need ETH to transact.
 def _gas_price():
-    return int(w3.eth.gas_price * 1.25)
+    return 0
 
 
 # Base fields shared by every prepared transaction. nonce_offset lets batch
@@ -31,7 +29,7 @@ def _gas_price():
 def _base_tx(user_address: str, nonce_offset: int = 0, with_gas_price: bool = True) -> dict:
     addr = Web3.to_checksum_address(user_address)
     tx = {
-        'chainId': sepolia_chain_id,    # required for Sepolia
+        'chainId': w3.eth.chain_id, # not sepolia anymore
         'nonce': w3.eth.get_transaction_count(addr) + nonce_offset,
         'from': addr,
     }
@@ -261,7 +259,7 @@ def prepare_inherited_grant_transactions(cids: list[str], recipients: list[str],
     for i, to in enumerate(recipients):
         fn = contract.functions.grantFiles(cids, Web3.to_checksum_address(to), SHARE_MASK)
         txns.append(fn.build_transaction({
-            'chainId': sepolia_chain_id,
+            'chainId': w3.eth.chain_id, # not sepolia anymore
             'gasPrice': _gas_price(),
             'nonce': base_nonce + nonce_offset + i,
             'from': user_address,

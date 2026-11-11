@@ -1,0 +1,214 @@
+# Run from the backend's besu/ directory.
+# Adapted for this project; not a verbatim Besu tutorial file.
+# Set BESU_HOST_IP to the host's public IP to expose P2P to off-host nodes
+# (defaults to 127.0.0.1 for a purely local network).
+name: dsp-besu
+
+x-besu: &besu
+  image: hyperledger/besu:26.9.0
+  restart: unless-stopped
+  stop_grace_period: 60s
+  environment:
+    JAVA_OPTS: "-Xms256m -Xmx768m"
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+services:
+  node1:
+    <<: *besu
+    environment:
+      JAVA_OPTS: "-Xms256m -Xmx768m"
+      BESU_P2P_HOST: "172.16.42.11"
+    command:
+      - --profile=ENTERPRISE
+      - --data-path=/var/lib/besu
+      - --genesis-file=/config/genesis.json
+      - --node-private-key-file=/var/lib/besu/key
+      - --static-nodes-file=/config/static-nodes.json
+      - --discovery-enabled=false
+      - --nat-method=NONE
+      - --p2p-port=30303
+      - --sync-mode=FULL
+      - --data-storage-format=FOREST
+      - --rpc-http-enabled=true
+      - --rpc-http-host=0.0.0.0
+      - --rpc-http-port=8545
+      - --rpc-http-api=ETH,NET,WEB3,QBFT
+      - --host-allowlist=localhost,127.0.0.1,node1
+      - --rpc-http-cors-origins=http://localhost:3000,http://127.0.0.1:3000,chrome-extension://nkbihfbeogaeaoehlefnkodbefgpgknn
+      - --ethstats=ws://node1:dsp-netstats-secret@172.16.42.1:3000
+    volumes:
+      - type: bind
+        source: ./networkFiles/genesis.json
+        target: /config/genesis.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./static-nodes.json
+        target: /config/static-nodes.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./nodes/node1/data
+        target: /var/lib/besu
+        bind:
+          create_host_path: false
+    networks:
+      besu:
+        ipv4_address: 172.16.42.11
+    ports:
+      - "127.0.0.1:8545:8545"
+      - "${BESU_HOST_IP:-127.0.0.1}:30313:30303"
+
+  node2:
+    <<: *besu
+    environment:
+      JAVA_OPTS: "-Xms256m -Xmx768m"
+      BESU_P2P_HOST: "172.16.42.12"
+    command:
+      - --profile=ENTERPRISE
+      - --data-path=/var/lib/besu
+      - --genesis-file=/config/genesis.json
+      - --node-private-key-file=/var/lib/besu/key
+      - --static-nodes-file=/config/static-nodes.json
+      - --discovery-enabled=false
+      - --nat-method=NONE
+      - --p2p-port=30303
+      - --sync-mode=FULL
+      - --data-storage-format=FOREST
+      - --rpc-http-enabled=true
+      - --rpc-http-host=0.0.0.0
+      - --rpc-http-port=8545
+      - --rpc-http-api=ETH,NET,WEB3,QBFT
+      - --host-allowlist=localhost,127.0.0.1,node1
+      - --rpc-http-cors-origins=http://localhost:3000,http://127.0.0.1:3000,chrome-extension://nkbihfbeogaeaoehlefnkodbefgpgknn
+      - --ethstats=ws://node2:dsp-netstats-secret@172.16.42.1:3000
+    volumes:
+      - type: bind
+        source: ./networkFiles/genesis.json
+        target: /config/genesis.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./static-nodes.json
+        target: /config/static-nodes.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./nodes/node2/data
+        target: /var/lib/besu
+        bind:
+          create_host_path: false
+    ports:
+      - "${BESU_HOST_IP:-127.0.0.1}:30323:30303"
+    networks:
+      besu:
+        ipv4_address: 172.16.42.12
+
+  node3:
+    <<: *besu
+    environment:
+      JAVA_OPTS: "-Xms256m -Xmx768m"
+      BESU_P2P_HOST: "172.16.42.13"
+    command:
+      - --profile=ENTERPRISE
+      - --data-path=/var/lib/besu
+      - --genesis-file=/config/genesis.json
+      - --node-private-key-file=/var/lib/besu/key
+      - --static-nodes-file=/config/static-nodes.json
+      - --discovery-enabled=false
+      - --nat-method=NONE
+      - --p2p-port=30303
+      - --sync-mode=FULL
+      - --data-storage-format=FOREST
+      - --rpc-http-enabled=true
+      - --rpc-http-host=0.0.0.0
+      - --rpc-http-port=8545
+      - --rpc-http-api=ETH,NET,WEB3,QBFT
+      - --host-allowlist=localhost,127.0.0.1,node1
+      - --rpc-http-cors-origins=http://localhost:3000,http://127.0.0.1:3000,chrome-extension://nkbihfbeogaeaoehlefnkodbefgpgknn
+      - --ethstats=ws://node3:dsp-netstats-secret@172.16.42.1:3000
+    volumes:
+      - type: bind
+        source: ./networkFiles/genesis.json
+        target: /config/genesis.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./static-nodes.json
+        target: /config/static-nodes.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./nodes/node3/data
+        target: /var/lib/besu
+        bind:
+          create_host_path: false
+    ports:
+      - "${BESU_HOST_IP:-127.0.0.1}:30333:30303"
+    networks:
+      besu:
+        ipv4_address: 172.16.42.13
+
+  node4:
+    <<: *besu
+    environment:
+      JAVA_OPTS: "-Xms256m -Xmx768m"
+      BESU_P2P_HOST: "172.16.42.14"
+    command:
+      - --profile=ENTERPRISE
+      - --data-path=/var/lib/besu
+      - --genesis-file=/config/genesis.json
+      - --node-private-key-file=/var/lib/besu/key
+      - --static-nodes-file=/config/static-nodes.json
+      - --discovery-enabled=false
+      - --nat-method=NONE
+      - --p2p-port=30303
+      - --sync-mode=FULL
+      - --data-storage-format=FOREST
+      - --rpc-http-enabled=true
+      - --rpc-http-host=0.0.0.0
+      - --rpc-http-port=8545
+      - --rpc-http-api=ETH,NET,WEB3,QBFT
+      - --host-allowlist=localhost,127.0.0.1,node1
+      - --rpc-http-cors-origins=http://localhost:3000,http://127.0.0.1:3000,chrome-extension://nkbihfbeogaeaoehlefnkodbefgpgknn
+      - --ethstats=ws://node4:dsp-netstats-secret@172.16.42.1:3000
+    volumes:
+      - type: bind
+        source: ./networkFiles/genesis.json
+        target: /config/genesis.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./static-nodes.json
+        target: /config/static-nodes.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./nodes/node4/data
+        target: /var/lib/besu
+        bind:
+          create_host_path: false
+    ports:
+      - "${BESU_HOST_IP:-127.0.0.1}:30343:30303"
+    networks:
+      besu:
+        ipv4_address: 172.16.42.14
+
+networks:
+  besu:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.16.42.0/24

@@ -1,0 +1,6 @@
+[
+  "enode://<node-1-public-key>@172.16.42.11:30303",
+  "enode://<node-2-public-key>@172.16.42.12:30303",
+  "enode://<node-3-public-key>@172.16.42.13:30303",
+  "enode://<node-4-public-key>@172.16.42.14:30303"
+]

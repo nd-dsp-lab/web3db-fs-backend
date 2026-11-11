@@ -49,9 +49,10 @@ def configure_app(app):
 IPFS_API_URL = os.getenv("IPFS_API_URL", "http://localhost:5001/api/v0")
 IPFS_GATEWAY_URL = os.getenv("IPFS_GATEWAY_URL", "http://localhost:8082/ipfs")
 
-# connect to web3 via infura --> use environment variable
-infura_url = os.getenv("INFURA_URL") or f"https://sepolia.infura.io/v3/{os.getenv('INFURA_API_KEY')}"
-w3 = Web3(Web3.HTTPProvider(infura_url))
+# Connect to the local Besu node by default. Override with RPC_URL (or the
+# legacy INFURA_URL for the old Sepolia endpoint).
+rpc_url = os.getenv("RPC_URL") or os.getenv("INFURA_URL") or "http://127.0.0.1:8545"
+w3 = Web3(Web3.HTTPProvider(rpc_url))
 try:
     if w3.is_connected():
         logger.info("Web3 is connected")
