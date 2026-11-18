@@ -4,6 +4,7 @@ import logging
 from dotenv import load_dotenv
 from fastapi.middleware.cors import CORSMiddleware
 from web3 import Web3
+from web3.middleware import geth_poa_middleware
 
 from logging_config import setup_logging
 
@@ -53,6 +54,20 @@ IPFS_GATEWAY_URL = os.getenv("IPFS_GATEWAY_URL", "http://localhost:8082/ipfs")
 # legacy INFURA_URL for the old Sepolia endpoint).
 rpc_url = os.getenv("RPC_URL") or os.getenv("INFURA_URL") or "http://127.0.0.1:8545"
 w3 = Web3(Web3.HTTPProvider(rpc_url))
+
+# Besu QBFT packs the validator set and round seals into each block header's
+# extraData, which runs to hundreds of bytes (437 on our chain). web3's
+# default block formatter enforces Ethereum's 32-byte limit and raises on
+# every block read, so this must be injected for any POA/IBFT/clique chain.
+#
+# Only the write paths that leave fees to web3 hit it: they fetch the latest
+# block for baseFeePerGas. That is why uploads, moves and shares worked on
+# Besu while delete-folder and empty-trash returned 500 -- prepare_delete_folder
+# is the one caller passing with_gas_price=False.
+#
+# The middleware relaxes that one field (renaming it proofOfAuthorityData)
+# and is harmless against a non-POA node, so it is injected unconditionally.
+w3.middleware_onion.inject(geth_poa_middleware, "poa", layer=0)
 try:
     if w3.is_connected():
         logger.info("Web3 is connected")
