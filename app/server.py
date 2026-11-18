@@ -8,6 +8,7 @@ from fastapi import FastAPI, Request
 from configure import configure_app
 from routers.attestation import router as attestation_router
 from routers.auth import router as auth_router
+from routers.broadcast import router as broadcast_router
 from routers.sharing import router as sharing_router
 from routers.file_ops import router as file_ops_router
 from routers.upload import router as upload_router
@@ -50,6 +51,7 @@ async def log_requests(request: Request, call_next):
 
 app.include_router(attestation_router)
 app.include_router(auth_router)
+app.include_router(broadcast_router)
 app.include_router(sharing_router)
 app.include_router(file_ops_router)
 app.include_router(upload_router)

@@ -5,6 +5,11 @@ from typing import Optional, List
 class TransactionRequest(BaseModel):
     tx_hash: str
 
+class BroadcastRequest(BaseModel):
+    # Hex-encoded, already-signed transaction. The wallet produced it; the
+    # backend only relays it, so there is nothing else to carry here.
+    raw_transaction: str
+
 class ShareRequest(BaseModel):
     cid: str
     to_address: str
